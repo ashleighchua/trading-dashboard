@@ -1,0 +1,2 @@
+trade_#,signal_date,signal_day,spy_friday_color,trade_date,trade_day,ticker,entry_price,stop_loss_price,exit_price,exit_type,shares,account_before,account_after,pnl_usd,return_pct,win_loss,notes
+1,2026-02-28,Friday,Red,2026-03-02,Monday,SPY,,,,,1,1000.00,,,,,

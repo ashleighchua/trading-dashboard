@@ -1,0 +1,92 @@
+SPY Signal Checker — 2026-02-27 10:14
+==================================================
+
+  Today: Thursday 2026-02-26
+  Open:  $693.28
+  Close: $689.30
+  Return: -0.57%
+  Color: RED
+
+  🔔 1 SIGNAL(S) DETECTED!
+
+  🟢 [STRONG] MULTI-DAY: Buy SPY at Friday open
+     Reason: Red Thursday (-0.57%)
+     Stop loss: 1.9% below entry (~$676.20)
+     Exit: Sell at Friday close
+
+  --- Recent SPY Days ---
+  🟢     Friday 02/20: $682.32 → $689.43 (+1.04%)
+  🔴     Monday 02/23: $687.83 → $682.39 (-0.79%)
+  🟢    Tuesday 02/24: $681.90 → $687.35 (+0.80%)
+  🟢  Wednesday 02/25: $690.18 → $693.15 (+0.43%)
+  🔴   Thursday 02/26: $693.28 → $689.30 (-0.57%)
+
+  Signal log: /Users/ashleighchua/trading analyses/signal_log.csv
+  Done!
+SPY Signal Checker — 2026-02-28 17:54
+==================================================
+
+  Today: Friday 2026-02-27
+  Open:  $683.09
+  Close: $685.99
+  Return: +0.42%
+  Color: GREEN
+
+  ✅ No trade signals for tomorrow.
+  Reason: Needed RED Friday, got GREEN
+
+  --- Recent SPY Days ---
+  🔴     Monday 02/23: $687.83 → $682.39 (-0.79%)
+  🟢    Tuesday 02/24: $681.90 → $687.35 (+0.80%)
+  🟢  Wednesday 02/25: $690.18 → $693.15 (+0.43%)
+  🔴   Thursday 02/26: $693.28 → $689.30 (-0.57%)
+  🟢     Friday 02/27: $683.09 → $685.99 (+0.42%)
+
+  Signal log: /Users/ashleighchua/trading analyses/signal_log.csv
+  Done!
+==============================
+Run: 2026-02-28 19:14:08
+==============================
+
+==================================================================
+  DAILY MULTI-ETF SIGNAL CHECKER
+  2026-02-28 19:14 Thailand time
+==================================================================
+
+  Downloading SPY, QQQ, IWM data...
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    THIS WEEK'S CANDLES                      │
+  ├────────────┬─────────────┬─────────────┬────────────────────┤
+  │    Day     │     SPY     │     QQQ     │       IWM          │
+  ├────────────┼─────────────┼─────────────┼────────────────────┤
+  │     Monday │ 🔴  -0.79%  │ 🔴  -0.86%  │ 🔴  -1.10%           │
+  │    Tuesday │ 🟢  +0.80%  │ 🟢  +0.91%  │ 🟢  +1.13%           │
+  │  Wednesday │ 🟢  +0.43%  │ 🟢  +0.92%  │ 🔴  -0.25%           │
+  │   Thursday │ 🔴  -0.57%  │ 🔴  -1.03%  │ 🟢  +0.37%           │
+  │     Friday │ 🟢  +0.42%  │ 🟢  +0.71%  │ 🔴  -0.26%           │
+  └────────────┴─────────────┴─────────────┴────────────────────┘
+
+  Latest close: SPY $685.99  |  QQQ $607.29  |  IWM $261.41
+  Today (US): Friday  |  Next trading day: Monday
+
+  ╔══════════════════════════════════════════════════════════════╗
+  ║  🔔  1 SIGNAL(S) DETECTED!                               ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  ── TIER 3: BACKUP SIGNALS ───────────────────────────────────
+
+  [T3] SPY — Today gapped down -0.90% — gap fill was active
+       WR: 55.7%  |  SL: 0.5%
+
+  ╔══════════════════════════════════════════════════════════════╗
+  ║                    TONIGHT'S TRADE PLAN                     ║
+  ╠══════════════════════════════════════════════════════════════╣
+  ║  No Tier 1 signals. Best backup: SPY (55.7% WR) 
+  ║  Consider skipping or using backup signal cautiously.      ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  Signal log: /Users/ashleighchua/trading analyses/signal_log.csv
+  Done! ✅
+
+
