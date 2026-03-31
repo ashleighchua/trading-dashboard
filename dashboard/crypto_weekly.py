@@ -14,7 +14,7 @@ import sys
 import logging
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 logging.basicConfig(
@@ -82,10 +82,11 @@ def main():
 
     # --- Fetch price data ---
     try:
+        start = datetime.now(timezone.utc) - timedelta(days=210)
         bars_request = CryptoBarsRequest(
             symbol_or_symbols=SYMBOL,
             timeframe=TimeFrame.Day,
-            limit=BARS_NEEDED,
+            start=start,
         )
         bars_response = crypto_client.get_crypto_bars(bars_request)
         bars = bars_response[SYMBOL]
