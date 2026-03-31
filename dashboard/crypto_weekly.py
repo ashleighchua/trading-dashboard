@@ -27,8 +27,8 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 from alpaca.data.historical.crypto import CryptoHistoricalDataClient
 from alpaca.data.requests import CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -38,7 +38,8 @@ CHAT_ID   = os.environ["TELEGRAM_CHAT_ID"]
 APCA_KEY  = os.environ["APCA_API_KEY_ID"]
 APCA_SECRET = os.environ["APCA_API_SECRET_KEY"]
 
-SYMBOL      = "BTC/USD"
+SYMBOL          = "BTC/USD"   # used for data API and order placement
+POSITION_SYMBOL = "BTCUSD"    # Alpaca strips the slash in position responses
 SMA_PERIOD  = 200
 BARS_NEEDED = SMA_PERIOD + 1      # +1 so we have current price separate from SMA window
 EQUITY_PCT  = 0.20
@@ -71,13 +72,9 @@ def calculate_sma(closes, period=200):
 
 
 def get_btc_position():
-    """Return open BTC/USD position or None."""
-    try:
-        positions = trading_client.get_all_positions()
-        return next((p for p in positions if p.symbol == "BTCUSD"), None)
-    except Exception as e:
-        logging.error("Error fetching positions: {}".format(e))
-        return None
+    """Return open BTC/USD position or None. Raises on API error."""
+    positions = trading_client.get_all_positions()
+    return next((p for p in positions if p.symbol == POSITION_SYMBOL), None)
 
 
 def main():
@@ -113,7 +110,13 @@ def main():
     signal_long = current_price > sma
 
     # --- Check existing position ---
-    position = get_btc_position()
+    try:
+        position = get_btc_position()
+    except Exception as e:
+        msg = "Could not fetch positions: {}".format(e)
+        logging.error(msg)
+        send_telegram("⚠️ *BTC TREND ERROR*\n{}".format(msg))
+        return
     has_position = position is not None
 
     today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -126,11 +129,26 @@ def main():
             equity = float(account.equity)
             qty = round((equity * EQUITY_PCT) / current_price, 6)
 
+            # Check for pending BTC orders to avoid double-ordering
+            open_orders = trading_client.get_orders(GetOrdersRequest(
+                status=QueryOrderStatus.OPEN,
+                symbols=[SYMBOL],
+            ))
+            if open_orders:
+                logging.info("Open BTC order already exists ({}). Skipping buy.".format(open_orders[0].id))
+                send_telegram(
+                    "📊 *BTC TREND CHECK*\n\n"
+                    "BTC: ${:.2f} | 200-day MA: ${:.2f}\n"
+                    "Signal: LONG — pending order already open, skipping".format(current_price, sma)
+                )
+                return
+
+            logging.info("Placing BUY order for {:.6f} BTC at market".format(qty))
             req = MarketOrderRequest(
                 symbol=SYMBOL,
                 qty=qty,
                 side=OrderSide.BUY,
-                time_in_force=TimeInForce.GTC,
+                time_in_force=TimeInForce.DAY,
                 client_order_id="btc-ma-buy-{}".format(today_str),
             )
             order = trading_client.submit_order(req)
@@ -152,11 +170,12 @@ def main():
             entry = float(position.avg_entry_price)
             pnl = float(position.unrealized_pl)
 
+            logging.info("Placing SELL order for {:.6f} BTC at market".format(qty))
             req = MarketOrderRequest(
                 symbol=SYMBOL,
                 qty=qty,
                 side=OrderSide.SELL,
-                time_in_force=TimeInForce.GTC,
+                time_in_force=TimeInForce.DAY,
                 client_order_id="btc-ma-sell-{}".format(today_str),
             )
             order = trading_client.submit_order(req)
