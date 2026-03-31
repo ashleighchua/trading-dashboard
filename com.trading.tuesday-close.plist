@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trading.tuesday-close</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/ashleighchua/trading analyses/dashboard/tuesday_close.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ashleighchua/trading analyses/dashboard</string>
+
+    <!-- 02:55 Bangkok Wednesday = 19:55 UTC Tuesday = 15:55 ET (EDT) = 5 min before close -->
+    <!-- Change to 03:55 Bangkok in November (EST). Weekday 3 = Wednesday Bangkok = Tuesday ET. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>3</integer>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>55</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ashleighchua/trading analyses/tuesday_close.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ashleighchua/trading analyses/tuesday_close_error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/ashleighchua/trading analyses/dashboard</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

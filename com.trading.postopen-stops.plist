@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trading.postopen-stops</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/ashleighchua/trading analyses/dashboard/postopen_stops.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ashleighchua/trading analyses/dashboard</string>
+
+    <!-- 20:35 Bangkok = 13:35 UTC = 9:35 AM EDT (Mar–Nov). Change to 21:35 in November (EST). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>20</integer>
+        <key>Minute</key>
+        <integer>35</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ashleighchua/trading analyses/postopen_stops.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ashleighchua/trading analyses/postopen_stops_error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/ashleighchua/trading analyses/dashboard</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

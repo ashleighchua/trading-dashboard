@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trading.premarket-scanner</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/ashleighchua/trading analyses/dashboard/premarket_scanner.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ashleighchua/trading analyses/dashboard</string>
+
+    <!-- 20:20 Bangkok = 13:20 UTC = 9:20 AM EDT (Mar–Nov). Change to 21:20 in November (EST). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>20</integer>
+        <key>Minute</key>
+        <integer>20</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ashleighchua/trading analyses/premarket_scanner.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ashleighchua/trading analyses/premarket_scanner_error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/ashleighchua/trading analyses/dashboard</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
