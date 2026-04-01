@@ -91,20 +91,17 @@ def main():
         qty, entry_price, current_price, unrealized_pnl
     ))
 
-    # Cancel any open trailing stops on SPY first
+    # Cancel any open SPY orders first (stops, trailing stops, etc.)
     try:
         open_orders = trading_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
-        spy_stops = [
-            o for o in open_orders
-            if o.symbol == "SPY" and str(o.order_type) in ("trailing_stop", "OrderType.trailing_stop")
-        ]
-        for stop in spy_stops:
-            trading_client.cancel_order_by_id(stop.id)
-            logging.info("Cancelled trailing stop {}".format(stop.id))
-        if spy_stops:
-            time.sleep(2)  # wait for Alpaca to release held qty before placing sell
+        spy_orders = [o for o in open_orders if o.symbol == "SPY"]
+        for o in spy_orders:
+            trading_client.cancel_order_by_id(o.id)
+            logging.info("Cancelled open SPY order {} ({})".format(o.id, o.order_type))
+        if spy_orders:
+            time.sleep(3)  # wait for Alpaca to release held qty before placing sell
     except Exception as e:
-        logging.warning("Could not cancel trailing stops: {}".format(e))
+        logging.warning("Could not cancel open SPY orders: {}".format(e))
 
     # Place market-on-close sell order
     try:
