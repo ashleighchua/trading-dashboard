@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
+from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, TrailingStopOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, StockLatestBarRequest
@@ -292,13 +292,14 @@ def pick_best_setup(occupied_symbols):
 # ---------------------------------------------------------------------------
 
 def place_opg_order(setup):
-    """Place a DAY market order at ~9:20 AM ET. Fills at or near open price.
+    """Place a DAY market order at ~9:20 AM ET + trailing stop.
     Note: OPG (time_in_force=opg) does not work on Alpaca paper trading —
     orders expire unfilled at 9:30 AM. DAY market orders fill immediately once
     the market opens and are equivalent in practice."""
     symbol = setup["symbol"]
     side = setup["side"]
     price = setup["entry"]
+    stop_pct = setup.get("stop_pct", 0.015)
 
     # Size: 95% for longs (SPY/ETF, low gap risk), 50% for shorts (single stocks, gap risk)
     account = trading_client.get_account()
@@ -322,6 +323,27 @@ def place_opg_order(setup):
 
     try:
         order = trading_client.submit_order(req)
+
+        # Place trailing stop after entry fills
+        if order and order.filled_qty:
+            try:
+                from alpaca.trading.requests import TrailingStopOrderRequest
+                stop_req = TrailingStopOrderRequest(
+                    symbol=symbol,
+                    qty=order.filled_qty,
+                    side=OrderSide.BUY if side == "short" else OrderSide.SELL,
+                    time_in_force=TimeInForce.GTC,
+                    trail_percent=stop_pct * 100,
+                    client_order_id="scanner-stop-{}-{}".format(
+                        symbol.lower(),
+                        datetime.now(timezone.utc).strftime("%Y%m%d")
+                    ),
+                )
+                stop_order = trading_client.submit_order(stop_req)
+                logging.info("Trailing stop placed for {} ({}%)".format(symbol, stop_pct * 100))
+            except Exception as e:
+                logging.warning("Could not place trailing stop for {}: {}".format(symbol, e))
+
         return order, qty
     except Exception as e:
         return None, qty
