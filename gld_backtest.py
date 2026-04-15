@@ -22,16 +22,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# Load .env so data_provider can find Alpaca/Tiingo keys
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
-# Use the same data provider as the live scanner
-sys.path.insert(0, str(Path(__file__).parent / "dashboard"))
-from data_provider import download
-
 SYMBOL         = "GLD"
 START          = "2019-06-01"   # extra history for EMA warmup
+END            = datetime.today().strftime("%Y-%m-%d")
 BACKTEST_START = "2020-01-01"
 SL_PCT         = 1.5            # 1.5% stop loss — GLD daily range ~0.5-1%
 INIT_EQ        = 10_000.0
@@ -45,12 +41,15 @@ from alpaca.data.timeframe import TimeFrame
 
 key    = os.environ.get("APCA_API_KEY_ID", "")
 secret = os.environ.get("APCA_API_SECRET_KEY", "")
+if not key or not secret:
+    raise RuntimeError("Set APCA_API_KEY_ID and APCA_API_SECRET_KEY in .env")
 client = StockHistoricalDataClient(key, secret)
 
 req = StockBarsRequest(
     symbol_or_symbols=SYMBOL,
     timeframe=TimeFrame.Day,
     start=datetime.strptime(START, "%Y-%m-%d"),
+    end=datetime.strptime(END, "%Y-%m-%d"),
 )
 bars = client.get_stock_bars(req)
 df_raw = bars.df
