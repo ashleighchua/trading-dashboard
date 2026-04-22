@@ -12,6 +12,8 @@ import os
 import sys
 import json
 import time
+import uuid
+import sqlite3
 import logging
 import urllib.request
 import urllib.parse
@@ -144,6 +146,55 @@ def get_open_orders():
     except Exception:
         return set()
 
+DB_PATH = Path(__file__).parent / "trades.db"
+
+
+def record_entry(setup, order, qty):
+    """Write trade entry to DB immediately after order placement (before sync cycle runs)."""
+    if order is None:
+        return
+    symbol = setup["symbol"]
+    side = "Long" if setup["side"] == "long" else "Short"
+    signal_type = "Bear Rally Fade" if setup["side"] == "short" else "Scanner Long"
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    trade_id = uuid.uuid4().hex[:12]
+    try:
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute("PRAGMA journal_mode=WAL")
+        existing = conn.execute(
+            "SELECT id FROM trades WHERE ticker=? AND date=? AND exit_price IS NULL",
+            (symbol, date_str)
+        ).fetchone()
+        if existing:
+            conn.close()
+            return
+        conn.execute("""
+            INSERT INTO trades
+                (id, date, ticker, direction, signal_type, entry_price, shares, notes, confidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            trade_id, date_str, symbol, side, signal_type,
+            setup["entry"], qty,
+            "Scanner entry — order {}".format(str(order.id)[:8]), 3,
+        ))
+        conn.commit()
+        conn.close()
+        logging.info("record_entry: wrote %s %s to DB", side, symbol)
+    except Exception as e:
+        logging.error("record_entry failed for %s: %s", symbol, e)
+
+
+def compute_ema200(bars):
+    closes = [b["c"] for b in bars]
+    if len(closes) < 201:
+        return None
+    k = 2.0 / 201.0
+    ema = closes[0]
+    for c in closes[1:]:
+        ema = c * k + ema * (1.0 - k)
+    return ema
+
+
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
@@ -172,6 +223,7 @@ def score_ticker(symbol, macro_regime="NEUTRAL", regime_data=None):
     rsi = analysis.get("rsi_14")
     conviction = analysis.get("conviction", 0)
     current_price = analysis.get("current_price")
+    ema200 = compute_ema200(bars)
 
     setup = None
 
@@ -180,9 +232,12 @@ def score_ticker(symbol, macro_regime="NEUTRAL", regime_data=None):
     # FRED regime gate: RISK_ON blocked; rapid curve steepening (steepening_rally) also blocked
     _regime = analysis.get("_macro_regime", "NEUTRAL")
     _regime_data = analysis.get("_regime_data", {})
+    price_below_ema200 = (ema200 is not None and current_price is not None
+                          and current_price < ema200)
     if (symbol in FADE_WATCHLIST
             and trend.get("trend") == "downtrend"
             and trend.get("bear_rally")
+            and price_below_ema200
             and regime_allows_short(_regime, _regime_data)):
         target_pct = 0.025  # target 2.5% fade
         stop_pct = 0.015    # 1.5% trailing stop
@@ -192,8 +247,8 @@ def score_ticker(symbol, macro_regime="NEUTRAL", regime_data=None):
             "entry": current_price,
             "target": round(current_price * (1 - target_pct), 2),
             "stop_pct": stop_pct,
-            "thesis": "Bear rally fade: {} in downtrend, bounced {:.1f}% off recent low, RSI {:.0f}".format(
-                symbol, trend.get("recent_bounce_pct", 0), rsi
+            "thesis": "Bear rally fade: {} below EMA-200 (${:.2f}), bounced {:.1f}% off recent low, RSI {:.0f}".format(
+                symbol, ema200, trend.get("recent_bounce_pct", 0), rsi
             ),
             "conviction": conviction + (2 if trend.get("bear_rally") else 0),
             "analysis": analysis,
@@ -480,6 +535,7 @@ def main():
     ))
 
     order, qty = place_opg_order(setup)
+    record_entry(setup, order, qty)
     msg = build_alert(setup, order, qty)
     send_telegram(msg)
 
