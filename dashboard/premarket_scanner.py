@@ -58,8 +58,9 @@ WATCHLIST = [
 ]
 
 # Tickers where bear rally fade has positive PF over 6-year backtest.
-# SPY, QQQ, IWM, AAPL, NVDA, GLD, TLT, EWJ excluded — negative contribution.
-FADE_WATCHLIST = ["KWEB", "EWH", "FXI", "PLTR", "TSLA", "AMD"]
+# PLTR+FXI: 54.1% WR, PF 1.88 (74 trades, 2020-2026, with EMA-200 filter)
+# Removed: KWEB (WR 29.8%, PF 0.61), TSLA (WR 40.8%, PF 1.14), AMD (WR 39.0%, PF 1.33)
+FADE_WATCHLIST = ["PLTR", "FXI"]
 
 # Tickers where trend pullback long has positive PF over 6-year backtest.
 # NVDA only: EMA(50,200) + RSI<35 + 1.5% trailing stop → 60% WR, PF 4.82 (15 trades, 2020-2026)
