@@ -153,7 +153,12 @@ def score_ticker(symbol, macro_regime="NEUTRAL", regime_data=None):
     Fetch bars, run full_analysis, return a scored setup dict or None.
     macro_regime/regime_data are injected from pick_best_setup() — fetched once, not per-ticker.
     """
-    bars = fetch_bars(symbol)
+    # Extra history needed for EMA warmup:
+    #   GLD       → EMA(20,50):   needs 51+ bars
+    #   NVDA      → EMA(50,200):  needs 201+ bars
+    #   PLTR, FXI → EMA-200 gate: needs 201+ bars
+    bar_limit = 260 if symbol in LONG_WATCHLIST or symbol in FADE_WATCHLIST else 25
+    bars = fetch_bars(symbol, limit=bar_limit)
     if len(bars) < 15:
         return None
 
