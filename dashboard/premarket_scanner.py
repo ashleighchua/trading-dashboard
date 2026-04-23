@@ -65,8 +65,9 @@ WATCHLIST = [
 FADE_WATCHLIST = ["PLTR", "FXI"]
 
 # Tickers where trend pullback long has positive PF over 6-year backtest.
-# NVDA only: EMA(50,200) + RSI<35 + 1.5% trailing stop → 60% WR, PF 4.82 (15 trades, 2020-2026)
-LONG_WATCHLIST = ["NVDA"]
+# GLD: EMA(20,50) + 2% pullback + RSI<45 + 2% stop → 64% WR, PF 4.00 (25 trades, 2020-2026)
+# NVDA: disabled — 0% WR in backtest, needs investigation before re-enabling
+LONG_WATCHLIST = ["GLD"]
 
 # ---------------------------------------------------------------------------
 # Telegram
@@ -254,9 +255,46 @@ def score_ticker(symbol, macro_regime="NEUTRAL", regime_data=None):
             "analysis": analysis,
         }
 
-    # --- Trend Pullback Long (NVDA only) ---
-    # DISABLED: backtest showed 0% WR over 24 trades (2020-2026). Needs investigation.
-    # if (symbol in LONG_WATCHLIST ...)
+    # --- GLD Trend Pullback Long ---
+    # EMA(20,50) uptrend + 2% pullback from 10-day high + RSI<45
+    # Backtested: 64% WR, PF 4.00 (25 trades, 2020-2026). Stop: 2.0% trailing.
+    if symbol == "GLD" and len(bars) >= 55:
+        closes = [b["c"] for b in bars]
+        highs  = [b["h"] for b in bars]
+
+        # EMA-20 and EMA-50
+        def _ema(prices, span):
+            k, e = 2.0 / (span + 1), prices[0]
+            for p in prices[1:]:
+                e = p * k + e * (1 - k)
+            return e
+
+        ema20 = _ema(closes, 20)
+        ema50 = _ema(closes, 50)
+
+        high10 = max(highs[-10:])
+        pullback_pct = (high10 - current_price) / high10 * 100
+
+        gld_uptrend   = ema20 > ema50
+        gld_pullback  = pullback_pct >= 2.0
+        gld_rsi       = rsi is not None and rsi < 45
+
+        if gld_uptrend and gld_pullback and gld_rsi and regime_allows_long(_regime, _regime_data):
+            stop_pct = 0.020
+            gld_setup = {
+                "symbol": "GLD",
+                "side": "long",
+                "entry": current_price,
+                "target": round(current_price * 1.025, 2),
+                "stop_pct": stop_pct,
+                "thesis": "GLD pullback long: EMA(20>50) uptrend, pulled back {:.1f}% from 10-day high, RSI {:.0f}".format(
+                    pullback_pct, rsi
+                ),
+                "conviction": conviction + 3,
+                "analysis": analysis,
+            }
+            if setup is None or gld_setup["conviction"] > setup["conviction"]:
+                setup = gld_setup
 
     # --- Monday Reversal (SPY only, fade-down, validated) ---
     # Buy Monday open when SPY Friday close was down >0.5%
