@@ -254,31 +254,9 @@ def score_ticker(symbol, macro_regime="NEUTRAL", regime_data=None):
             "analysis": analysis,
         }
 
-    # --- Trend Pullback Long (NVDA only, validated) ---
-    # EMA(50,200) uptrend + RSI<35 + pulled back ≥3% from 10-day high
-    # Backtested: 60% WR, PF 4.82 (15 trades, 2020-2026)
-    # Regime gate: RISK_OFF blocks (pullbacks extend in bear markets)
-    if (symbol in LONG_WATCHLIST
-            and regime_allows_long(_regime, _regime_data)):
-        tp = trend_pullback(bars, ema_fast=50, ema_slow=200, pullback_threshold=3.0, rsi_max=35)
-        if tp.get("pullback_long"):
-            target_pct = 0.025
-            stop_pct = 0.015
-            long_setup = {
-                "symbol": symbol,
-                "side": "long",
-                "entry": current_price,
-                "target": round(current_price * (1 + target_pct), 2),
-                "stop_pct": stop_pct,
-                "thesis": "Trend pullback long: {} in uptrend, pulled back {:.1f}% from high, RSI {:.0f}".format(
-                    symbol, tp.get("recent_pullback_pct", 0), tp.get("rsi_14", 0)
-                ),
-                "conviction": conviction + 3,
-                "analysis": analysis,
-            }
-            # Only replace existing setup if no setup yet, or higher conviction
-            if setup is None or long_setup["conviction"] > setup["conviction"]:
-                setup = long_setup
+    # --- Trend Pullback Long (NVDA only) ---
+    # DISABLED: backtest showed 0% WR over 24 trades (2020-2026). Needs investigation.
+    # if (symbol in LONG_WATCHLIST ...)
 
     # --- Monday Reversal (SPY only, fade-down, validated) ---
     # Buy Monday open when SPY Friday close was down >0.5%
