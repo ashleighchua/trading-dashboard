@@ -1,0 +1,17 @@
+[Unit]
+Description=Trading Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/trading-analyses/dashboard
+ExecStart=/usr/bin/python3 /home/YOUR_USER/trading-analyses/dashboard/telegram_bot.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/YOUR_USER/trading-analyses/.env
+StandardOutput=append:/home/YOUR_USER/trading-analyses/telegram_bot.log
+StandardError=append:/home/YOUR_USER/trading-analyses/telegram_bot_error.log
+
+[Install]
+WantedBy=multi-user.target

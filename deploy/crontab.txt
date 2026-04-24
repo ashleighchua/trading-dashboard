@@ -1,0 +1,20 @@
+# Trading bot cron schedule (server timezone = Asia/Bangkok)
+# Replace YOUR_USER with output of `whoami` on the server
+
+# Premarket scanner — 8:20pm Bangkok, weekdays only
+20 20 * * 1-5  cd /home/YOUR_USER/trading-analyses/dashboard && /usr/bin/python3 premarket_scanner.py >> /home/YOUR_USER/trading-analyses/premarket_scanner.log 2>> /home/YOUR_USER/trading-analyses/premarket_scanner_error.log
+
+# Tuesday close — 2:45am Bangkok Wednesday (= 3:45pm ET Tuesday)
+45 2 * * 3  cd /home/YOUR_USER/trading-analyses/dashboard && /usr/bin/python3 tuesday_close.py >> /home/YOUR_USER/trading-analyses/tuesday_close.log 2>> /home/YOUR_USER/trading-analyses/tuesday_close_error.log
+
+# Trade sync — every 5 minutes
+*/5 * * * *  cd /home/YOUR_USER/trading-analyses/dashboard && /usr/bin/python3 sync_trades.py >> /home/YOUR_USER/trading-analyses/sync_trades.log 2>> /home/YOUR_USER/trading-analyses/sync_trades_error.log
+
+# Post-open stops — every 30 minutes
+*/30 * * * *  cd /home/YOUR_USER/trading-analyses/dashboard && /usr/bin/python3 postopen_stops.py >> /home/YOUR_USER/trading-analyses/postopen_stops.log 2>> /home/YOUR_USER/trading-analyses/postopen_stops_error.log
+
+# Price alerts — every 15 minutes
+*/15 * * * *  cd /home/YOUR_USER/trading-analyses/dashboard && /usr/bin/python3 price_alerts.py >> /home/YOUR_USER/trading-analyses/price_alerts.log 2>> /home/YOUR_USER/trading-analyses/price_alerts_error.log
+
+# Weekly report — 1pm Bangkok Sunday
+0 13 * * 0  cd /home/YOUR_USER/trading-analyses/dashboard && /usr/bin/python3 weekly_report.py >> /home/YOUR_USER/trading-analyses/weekly_report.log 2>&1
