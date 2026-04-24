@@ -378,12 +378,12 @@ def place_opg_order(setup):
     price = setup["entry"]
     stop_pct = setup.get("stop_pct", 0.015)
 
-    # Size: 95% for longs (SPY/ETF, low gap risk), 50% for shorts (single stocks, gap risk)
-    account = trading_client.get_account()
-    equity = float(account.equity)
-    size_pct = 0.95 if side == "long" else 0.50
-    trade_size = equity * size_pct
-    qty = max(1, int(trade_size / price))
+    # Size by fixed dollar risk: max $100 loss per trade
+    # shares = $100 / (entry_price × stop_pct)
+    # e.g. PLTR $145, 1.5% stop → $100 / $2.17 = 46 shares → max loss = $100
+    MAX_RISK = 100.0
+    stop_distance = price * stop_pct
+    qty = max(1, int(MAX_RISK / stop_distance))
 
     order_side = OrderSide.BUY if side == "long" else OrderSide.SELL
 
