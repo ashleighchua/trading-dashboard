@@ -14,7 +14,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, send_from_directory, g
+from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -34,9 +34,11 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 
 auth = HTTPBasicAuth()
 _DASHBOARD_USER = "ashleigh"
-_DASHBOARD_PASS = generate_password_hash(
-    os.environ.get("DASHBOARD_PASSWORD", "changeme123")
-)
+_raw_pass = os.environ.get("DASHBOARD_PASSWORD")
+if not _raw_pass:
+    logging.warning("DASHBOARD_PASSWORD not set — using insecure default password!")
+    _raw_pass = "changeme123"
+_DASHBOARD_PASS = generate_password_hash(_raw_pass)
 
 @auth.verify_password
 def verify_password(username, password):
@@ -44,9 +46,9 @@ def verify_password(username, password):
         return username
 
 @app.before_request
-def require_auth():
-    if not auth.current_user():
-        return auth.login_required(lambda: None)()
+@auth.login_required
+def before_request():
+    pass
 
 
 # ── Database ─────────────────────────────────────────────────────────────────
