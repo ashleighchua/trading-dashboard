@@ -5,13 +5,24 @@ Flask server with SQLite storage for logging and reviewing trades.
 Run: python3 app.py → opens http://localhost:5050
 """
 
+import json
 import os
+import sys
 import csv
 import sqlite3
 import uuid
+import logging
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, g
+from flask_httpauth import HTTPBasicAuth
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# Load .env file if present (for Alpaca keys)
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+from data_provider import download, download_multi
 
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "trades.db"
@@ -20,6 +31,22 @@ SIGNAL_LOG = BASE_DIR.parent / "signal_log.csv"
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
+
+auth = HTTPBasicAuth()
+_DASHBOARD_USER = "ashleigh"
+_DASHBOARD_PASS = generate_password_hash(
+    os.environ.get("DASHBOARD_PASSWORD", "changeme123")
+)
+
+@auth.verify_password
+def verify_password(username, password):
+    if username == _DASHBOARD_USER and check_password_hash(_DASHBOARD_PASS, password):
+        return username
+
+@app.before_request
+def require_auth():
+    if not auth.current_user():
+        return auth.login_required(lambda: None)()
 
 
 # ── Database ─────────────────────────────────────────────────────────────────
@@ -164,6 +191,23 @@ def get_stats():
         })
 
     trades = [dict(t) for t in trades]
+    # Separate closed (have P&L) from open (no exit yet)
+    open_trades = [t for t in trades if t.get('pnl') is None or t.get('exit_price') is None]
+    trades = [t for t in trades if t.get('pnl') is not None and t.get('exit_price') is not None]
+
+    if not trades:
+        return jsonify({
+            "total_trades": 0, "win_rate": 0, "total_pnl": 0,
+            "profit_factor": 0, "avg_win": 0, "avg_loss": 0,
+            "best_trade": 0, "worst_trade": 0, "current_streak": 0,
+            "by_signal": {}, "by_emotion": {}, "by_confidence": {},
+            "equity_curve": [], "calendar": {},
+            "open_positions": len(open_trades),
+            "open_trades": [{"ticker": t["ticker"], "direction": t["direction"],
+                           "entry_price": t["entry_price"], "shares": t["shares"],
+                           "date": t["date"]} for t in open_trades],
+        })
+
     pnls = [t['pnl'] for t in trades]
     wins = [t for t in trades if t['pnl'] > 0]
     losses = [t for t in trades if t['pnl'] <= 0]
@@ -249,6 +293,10 @@ def get_stats():
         "by_confidence": by_confidence,
         "equity_curve": equity,
         "calendar": calendar,
+        "open_positions": len(open_trades),
+        "open_trades": [{"ticker": t["ticker"], "direction": t["direction"],
+                       "entry_price": t["entry_price"], "shares": t["shares"],
+                       "date": t["date"]} for t in open_trades],
     })
 
 
@@ -269,22 +317,87 @@ def get_signal():
     return jsonify({"signal": None})
 
 
+def _market_status():
+    """Return market open/close status for US, SGX, HKEX, TSE."""
+    from datetime import datetime
+    import pytz
+
+    now_utc = datetime.now(pytz.utc)
+    status = {}
+
+    # US market: 9:30 AM - 4:00 PM ET
+    et = pytz.timezone('US/Eastern')
+    now_et = now_utc.astimezone(et)
+    us_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    us_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    us_is_open = now_et.weekday() < 5 and us_open <= now_et <= us_close
+    status['US'] = {
+        'open': us_is_open,
+        'label': 'US Market OPEN' if us_is_open else 'US Market CLOSED',
+        'close_time': '4:00 PM ET',
+        'local_time': now_et.strftime('%I:%M %p ET'),
+    }
+
+    # SGX: 9:00 AM - 5:00 PM SGT
+    sgt = pytz.timezone('Asia/Singapore')
+    now_sgt = now_utc.astimezone(sgt)
+    sgx_open = now_sgt.replace(hour=9, minute=0, second=0, microsecond=0)
+    sgx_close = now_sgt.replace(hour=17, minute=0, second=0, microsecond=0)
+    sgx_is_open = now_sgt.weekday() < 5 and sgx_open <= now_sgt <= sgx_close
+    status['SGX'] = {
+        'open': sgx_is_open,
+        'label': 'SGX OPEN' if sgx_is_open else 'SGX CLOSED',
+        'close_time': '5:00 PM SGT',
+        'local_time': now_sgt.strftime('%I:%M %p SGT'),
+    }
+
+    # HKEX: 9:30 AM - 4:00 PM HKT
+    hkt = pytz.timezone('Asia/Hong_Kong')
+    now_hkt = now_utc.astimezone(hkt)
+    hk_open = now_hkt.replace(hour=9, minute=30, second=0, microsecond=0)
+    hk_close = now_hkt.replace(hour=16, minute=0, second=0, microsecond=0)
+    hk_is_open = now_hkt.weekday() < 5 and hk_open <= now_hkt <= hk_close
+    status['HKEX'] = {
+        'open': hk_is_open,
+        'label': 'HKEX OPEN' if hk_is_open else 'HKEX CLOSED',
+        'close_time': '4:00 PM HKT',
+        'local_time': now_hkt.strftime('%I:%M %p HKT'),
+    }
+
+    # TSE: 9:00 AM - 3:00 PM JST
+    jst = pytz.timezone('Asia/Tokyo')
+    now_jst = now_utc.astimezone(jst)
+    tse_open = now_jst.replace(hour=9, minute=0, second=0, microsecond=0)
+    tse_close = now_jst.replace(hour=15, minute=0, second=0, microsecond=0)
+    tse_is_open = now_jst.weekday() < 5 and tse_open <= now_jst <= tse_close
+    status['TSE'] = {
+        'open': tse_is_open,
+        'label': 'TSE OPEN' if tse_is_open else 'TSE CLOSED',
+        'close_time': '3:00 PM JST',
+        'local_time': now_jst.strftime('%I:%M %p JST'),
+    }
+
+    any_open = any(s['open'] for s in status.values())
+    status['any_open'] = any_open
+
+    return status
+
+
 @app.route("/api/playbook")
 def get_playbook_signals():
     """Scan SPY, QQQ, IWM for today's active signals."""
     try:
-        import yfinance as yf
         import pandas as pd
 
         signals = []
         DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
-        tickers = {'SPY': 'SPY', 'QQQ': 'QQQ', 'IWM': 'IWM'}
+        ticker_list = ['SPY', 'QQQ', 'IWM', 'QQQM', 'SPLG', 'SPYM']
+        raw = download_multi(ticker_list, period="10d")
         data = {}
-        for name, sym in tickers.items():
-            df = yf.download(sym, period="10d", auto_adjust=True)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel('Ticker')
+        for name, df in raw.items():
+            if df.empty:
+                continue
             df['Return'] = (df['Close'] - df['Open']) / df['Open'] * 100
             df['Color'] = df['Return'].apply(lambda x: 'Green' if x >= 0 else 'Red')
             df['DayOfWeek'] = df.index.dayofweek
@@ -295,6 +408,9 @@ def get_playbook_signals():
         spy = data['SPY']
         qqq = data['QQQ']
         iwm = data['IWM']
+        qqqm = data.get('QQQM')
+        splg = data.get('SPLG')
+        spym = data.get('SPYM')
 
         if len(spy) == 0:
             return jsonify({"signals": [], "week": [], "error": "No data"})
@@ -374,6 +490,78 @@ def get_playbook_signals():
         if tomorrow_dow == 4 and color(qqq) == 'Red' and abs(ret(qqq)) >= 0.5 and color(qqq, -1) == 'Green' and ret(qqq, -1) >= 0.5:
             signals.append({'ticker': 'QQQ', 'day': 'Friday', 'signal': f'Wed Grn + Thu Red → Buy Fri', 'wr': 64.7, 'sl': 2.0, 'tier': 'STRONG'})
 
+        # ── QQQM signals for tomorrow ──
+        if qqqm is not None and len(qqqm) >= 2:
+            # Monday: Fri Red >= 1.0%
+            if tomorrow_dow == 0 and color(qqqm) == 'Red' and abs(ret(qqqm)) >= 1.0:
+                signals.append({'ticker': 'QQQM', 'day': 'Monday', 'signal': f'Fri Red ({ret(qqqm):+.2f}%) → Buy Mon', 'wr': 74.3, 'sl': 2.0, 'tier': 'STRONG'})
+            # Monday combo: Thu Grn + Fri Red >= 0.3%
+            if tomorrow_dow == 0 and color(qqqm) == 'Red' and abs(ret(qqqm)) >= 0.3 and color(qqqm, -1) == 'Green' and ret(qqqm, -1) >= 0.3:
+                if not any(s['ticker'] == 'QQQM' and s['day'] == 'Monday' for s in signals):
+                    signals.append({'ticker': 'QQQM', 'day': 'Monday', 'signal': f'Thu Grn + Fri Red → Buy Mon', 'wr': 70.0, 'sl': 2.0, 'tier': 'STRONG'})
+            # Wednesday: Tue Green >= 1.0%
+            if tomorrow_dow == 2 and color(qqqm) == 'Green' and ret(qqqm) >= 1.0:
+                signals.append({'ticker': 'QQQM', 'day': 'Wednesday', 'signal': f'Tue Grn ({ret(qqqm):+.2f}%) → Buy Wed', 'wr': 62.5, 'sl': 2.0, 'tier': 'STRONG'})
+            # Wednesday combo: Mon Red + Tue Red >= 0.3%
+            if tomorrow_dow == 2 and color(qqqm) == 'Red' and abs(ret(qqqm)) >= 0.3 and color(qqqm, -1) == 'Red' and abs(ret(qqqm, -1)) >= 0.5:
+                if not any(s['ticker'] == 'QQQM' and s['day'] == 'Wednesday' for s in signals):
+                    signals.append({'ticker': 'QQQM', 'day': 'Wednesday', 'signal': f'Mon+Tue Red → Buy Wed', 'wr': 76.5, 'sl': 2.0, 'tier': 'STRONG'})
+            # Friday: Wed Grn + Thu Red >= 0.3%
+            if tomorrow_dow == 4 and color(qqqm) == 'Red' and abs(ret(qqqm)) >= 0.3 and color(qqqm, -1) == 'Green' and ret(qqqm, -1) >= 0.3:
+                signals.append({'ticker': 'QQQM', 'day': 'Friday', 'signal': f'Wed Grn + Thu Red → Buy Fri', 'wr': 71.4, 'sl': 2.0, 'tier': 'STRONG'})
+            # Friday: Thu Red >= 1.0%
+            if tomorrow_dow == 4 and color(qqqm) == 'Red' and abs(ret(qqqm)) >= 1.0:
+                if not any(s['ticker'] == 'QQQM' and s['day'] == 'Friday' for s in signals):
+                    signals.append({'ticker': 'QQQM', 'day': 'Friday', 'signal': f'Thu Red ({ret(qqqm):+.2f}%) → Buy Fri', 'wr': 61.1, 'sl': 2.0, 'tier': 'STRONG'})
+
+        # ── SPLG signals for tomorrow ──
+        if splg is not None and len(splg) >= 2:
+            # Monday: Fri Red >= 0.5%
+            if tomorrow_dow == 0 and color(splg) == 'Red' and abs(ret(splg)) >= 0.5:
+                signals.append({'ticker': 'SPLG', 'day': 'Monday', 'signal': f'Fri Red ({ret(splg):+.2f}%) → Buy Mon', 'wr': 72.0, 'sl': 1.9, 'tier': 'STRONG'})
+            # Monday combo: Thu Red + Fri Red >= 0.5%
+            if tomorrow_dow == 0 and color(splg) == 'Red' and abs(ret(splg)) >= 0.5 and color(splg, -1) == 'Red' and abs(ret(splg, -1)) >= 0.5:
+                if not any(s['ticker'] == 'SPLG' and s['day'] == 'Monday' for s in signals):
+                    signals.append({'ticker': 'SPLG', 'day': 'Monday', 'signal': f'Thu+Fri Red → Buy Mon', 'wr': 81.2, 'sl': 1.9, 'tier': 'STRONG'})
+            # Wednesday: Mon Red + Tue Grn >= 0.5%
+            if tomorrow_dow == 2 and color(splg) == 'Green' and ret(splg) >= 0.5 and color(splg, -1) == 'Red':
+                signals.append({'ticker': 'SPLG', 'day': 'Wednesday', 'signal': f'Mon Red + Tue Grn → Buy Wed', 'wr': 80.0, 'sl': 1.9, 'tier': 'STRONG'})
+            # Wednesday: Tue Grn >= 0.7%
+            if tomorrow_dow == 2 and color(splg) == 'Green' and ret(splg) >= 0.7:
+                if not any(s['ticker'] == 'SPLG' and s['day'] == 'Wednesday' for s in signals):
+                    signals.append({'ticker': 'SPLG', 'day': 'Wednesday', 'signal': f'Tue Grn ({ret(splg):+.2f}%) → Buy Wed', 'wr': 70.6, 'sl': 1.9, 'tier': 'STRONG'})
+            # Friday: Wed Red + Thu Grn >= 0.3%
+            if tomorrow_dow == 4 and color(splg) == 'Green' and ret(splg) >= 0.3 and color(splg, -1) == 'Red' and abs(ret(splg, -1)) >= 0.5:
+                signals.append({'ticker': 'SPLG', 'day': 'Friday', 'signal': f'Wed Red + Thu Grn → Buy Fri', 'wr': 76.5, 'sl': 1.9, 'tier': 'STRONG'})
+            # Friday: Thu Red >= 0.5%
+            if tomorrow_dow == 4 and color(splg) == 'Red' and abs(ret(splg)) >= 0.5:
+                if not any(s['ticker'] == 'SPLG' and s['day'] == 'Friday' for s in signals):
+                    signals.append({'ticker': 'SPLG', 'day': 'Friday', 'signal': f'Thu Red ({ret(splg):+.2f}%) → Buy Fri', 'wr': 62.7, 'sl': 1.9, 'tier': 'STRONG'})
+
+        # ── SPYM signals for tomorrow ──
+        if spym is not None and len(spym) >= 2:
+            # Monday: Fri Red >= 0.5%
+            if tomorrow_dow == 0 and color(spym) == 'Red' and abs(ret(spym)) >= 0.5:
+                signals.append({'ticker': 'SPYM', 'day': 'Monday', 'signal': f'Fri Red ({ret(spym):+.2f}%) → Buy Mon', 'wr': 72.0, 'sl': 1.9, 'tier': 'STRONG'})
+            # Monday combo: Thu Red + Fri Red >= 0.5%
+            if tomorrow_dow == 0 and color(spym) == 'Red' and abs(ret(spym)) >= 0.5 and color(spym, -1) == 'Red' and abs(ret(spym, -1)) >= 0.5:
+                if not any(s['ticker'] == 'SPYM' and s['day'] == 'Monday' for s in signals):
+                    signals.append({'ticker': 'SPYM', 'day': 'Monday', 'signal': f'Thu+Fri Red → Buy Mon', 'wr': 81.2, 'sl': 1.9, 'tier': 'STRONG'})
+            # Wednesday: Tue Green >= 0.8%
+            if tomorrow_dow == 2 and color(spym) == 'Green' and ret(spym) >= 0.8:
+                signals.append({'ticker': 'SPYM', 'day': 'Wednesday', 'signal': f'Tue Grn ({ret(spym):+.2f}%) → Buy Wed', 'wr': 75.0, 'sl': 1.9, 'tier': 'STRONG'})
+            # Wednesday combo: Mon Red + Tue Grn >= 0.5%
+            if tomorrow_dow == 2 and color(spym) == 'Green' and ret(spym) >= 0.5 and color(spym, -1) == 'Red':
+                if not any(s['ticker'] == 'SPYM' and s['day'] == 'Wednesday' for s in signals):
+                    signals.append({'ticker': 'SPYM', 'day': 'Wednesday', 'signal': f'Mon Red + Tue Grn → Buy Wed', 'wr': 70.0, 'sl': 1.9, 'tier': 'STRONG'})
+            # Friday: Wed Red + Thu Grn >= 0.5%
+            if tomorrow_dow == 4 and color(spym) == 'Green' and ret(spym) >= 0.5 and color(spym, -1) == 'Red' and abs(ret(spym, -1)) >= 0.5:
+                signals.append({'ticker': 'SPYM', 'day': 'Friday', 'signal': f'Wed Red + Thu Grn → Buy Fri', 'wr': 77.8, 'sl': 1.9, 'tier': 'STRONG'})
+            # Friday: Thu Red >= 0.5%
+            if tomorrow_dow == 4 and color(spym) == 'Red' and abs(ret(spym)) >= 0.5:
+                if not any(s['ticker'] == 'SPYM' and s['day'] == 'Friday' for s in signals):
+                    signals.append({'ticker': 'SPYM', 'day': 'Friday', 'signal': f'Thu Red ({ret(spym):+.2f}%) → Buy Fri', 'wr': 62.7, 'sl': 1.9, 'tier': 'STRONG'})
+
         # ── IWM signals for tomorrow ──
         # Monday: Thu Green + Fri Red >= 0.3%
         if tomorrow_dow == 0 and color(iwm) == 'Red' and abs(ret(iwm)) >= 0.3 and color(iwm, -1) == 'Green' and ret(iwm, -1) >= 0.3:
@@ -411,9 +599,59 @@ def get_playbook_signals():
         if today_dow == 1 and color(spy) == 'Red':
             signals.append({'ticker': 'SPY', 'day': 'Tue→Wed', 'signal': f'Red Tue ({ret(spy):+.2f}%) → Hold overnight', 'wr': 64.1, 'sl': 0, 'tier': 'OVERNIGHT'})
 
+        # ── Rare But Powerful ──
+        # VIX Spike (VIX > 35)
+        try:
+            vix = download('^VIX', period='5d')  # VIX uses yfinance fallback (non-US symbol)
+            if len(vix) > 0:
+                vix_val = float(vix.iloc[-1]['Close'])
+                if vix_val >= 35:
+                    signals.append({'ticker': 'SPY', 'day': tomorrow_name, 'signal': f'VIX Spike ({vix_val:.1f}) → Buy SPY', 'wr': 90.9, 'sl': 3.0, 'tier': 'RARE'})
+                elif vix_val >= 28:
+                    signals.append({'ticker': 'SPY', 'day': tomorrow_name, 'signal': f'VIX Elevated ({vix_val:.1f}) → Watch for entry', 'wr': 75.0, 'sl': 2.5, 'tier': 'RARE'})
+        except Exception:
+            pass
+
+        # RSI Oversold (RSI-14 < 30 on SPY)
+        try:
+            spy_3mo = download('SPY', period='3mo')
+            if len(spy_3mo) >= 14:
+                delta = spy_3mo['Close'].diff()
+                gain = delta.where(delta > 0, 0).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / loss
+                rsi = 100 - (100 / (1 + rs))
+                rsi_val = float(rsi.iloc[-1])
+                if rsi_val < 30:
+                    signals.append({'ticker': 'SPY', 'day': tomorrow_name, 'signal': f'RSI Oversold ({rsi_val:.1f}) → Buy SPY', 'wr': 83.3, 'sl': 2.0, 'tier': 'RARE'})
+        except Exception:
+            pass
+
+        # Earnings Season Drift (Jan, Apr, Jul, Oct)
+        import calendar as cal_mod
+        current_month = pd.Timestamp.now().month
+        if current_month in [1, 4, 7, 10]:
+            signals.append({'ticker': 'SPY', 'day': 'This month', 'signal': f'Earnings season ({cal_mod.month_name[current_month]}) → Bullish drift', 'wr': 78.0, 'sl': 2.0, 'tier': 'RARE'})
+
+        # MA Crossover (Golden Cross: SMA-50 crosses above SMA-200)
+        try:
+            if len(spy_3mo) >= 50:
+                sma50 = spy_3mo['Close'].rolling(50).mean()
+                sma200 = spy_3mo['Close'].rolling(200).mean() if len(spy_3mo) >= 200 else None
+                if sma200 is not None and not sma200.isna().all():
+                    # Check if SMA-50 just crossed above SMA-200 in last 3 days
+                    recent = pd.DataFrame({'sma50': sma50, 'sma200': sma200}).dropna().tail(5)
+                    if len(recent) >= 2:
+                        if recent['sma50'].iloc[-1] > recent['sma200'].iloc[-1] and recent['sma50'].iloc[-3] <= recent['sma200'].iloc[-3]:
+                            signals.append({'ticker': 'SPY', 'day': tomorrow_name, 'signal': 'Golden Cross (SMA-50 > SMA-200) → Bullish', 'wr': 75.0, 'sl': 2.0, 'tier': 'RARE'})
+        except Exception:
+            pass
+
         # Sort: STRONG first, then by win rate
-        tier_order = {'STRONG': 0, 'MULTI-DAY': 1, 'OVERNIGHT': 2, 'BACKUP': 3}
+        tier_order = {'RARE': 0, 'STRONG': 1, 'MULTI-DAY': 2, 'OVERNIGHT': 3, 'BACKUP': 4}
         signals.sort(key=lambda s: (tier_order.get(s['tier'], 9), -s['wr']))
+
+        market_status = _market_status()
 
         return jsonify({
             "signals": signals,
@@ -422,10 +660,196 @@ def get_playbook_signals():
             "today_date": today_date,
             "today_color": 'green' if ret(spy) >= 0 else 'red',
             "today_return": round(float(today['Return']), 2),
+            "market_status": market_status,
         })
 
     except Exception as e:
         return jsonify({"signals": [], "week": [], "error": str(e)})
+
+
+@app.route("/api/asian-signals")
+def get_asian_signals():
+    """Scan Asian ETFs for today's active signals."""
+    try:
+        import pandas as pd
+
+        DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+
+        ASIAN_TICKERS = {
+            'ES3.SI': {'name': 'STI ETF', 'market': 'SGX', 'sl': 1.5},
+            'G3B.SI': {'name': 'Nikko STI', 'market': 'SGX', 'sl': 1.5},
+            'CLR.SI': {'name': 'HSTECH SGX', 'market': 'SGX', 'sl': 2.5},
+            '2800.HK': {'name': 'Tracker HK', 'market': 'HKEX', 'sl': 2.0},
+            '3067.HK': {'name': 'HS Tech', 'market': 'HKEX', 'sl': 2.5},
+            '2828.HK': {'name': 'HSI ETF', 'market': 'HKEX', 'sl': 2.0},
+            '1306.T': {'name': 'Nikkei 225', 'market': 'TSE', 'sl': 2.0},
+            'EWJ': {'name': 'Japan', 'market': 'US-Asia', 'sl': 2.0},
+            'EWS': {'name': 'Singapore', 'market': 'US-Asia', 'sl': 2.0},
+            'EWH': {'name': 'HK', 'market': 'US-Asia', 'sl': 2.0},
+            'FXI': {'name': 'China LC', 'market': 'US-Asia', 'sl': 2.5},
+            'KWEB': {'name': 'CN Internet', 'market': 'US-Asia', 'sl': 3.0},
+            'EWT': {'name': 'Taiwan', 'market': 'US-Asia', 'sl': 2.0},
+            'EWY': {'name': 'S Korea', 'market': 'US-Asia', 'sl': 2.5},
+        }
+
+        # Signal configs (same as spy_signal_checker.py)
+        ASIAN_DAY_SIGNALS = {
+            'G3B.SI': {0: ('GREEN', 0.5, 'Tuesday', 67.6)},
+            '2800.HK': {2: ('RED', 1.0, 'Thursday', 67.6)},
+            '3067.HK': {2: ('RED', 1.5, 'Thursday', 59.0)},
+            '2828.HK': {3: ('RED', 0.8, 'Friday', 66.7)},
+            '1306.T': {3: ('RED', 0.5, 'Friday', 68.8)},
+            'EWJ': {0: ('GREEN', 0.5, 'Tuesday', 68.6), 4: ('RED', 0.0, 'Monday', 64.5)},
+            'EWS': {2: ('RED', 0.8, 'Thursday', 66.7)},
+            'EWH': {1: ('GREEN', 0.5, 'Wednesday', 65.3)},
+            'FXI': {1: ('RED', 1.0, 'Wednesday', 61.3), 2: ('RED', 1.0, 'Thursday', 61.3)},
+            'KWEB': {1: ('RED', 1.5, 'Wednesday', 60.0)},
+            'EWT': {0: ('RED', 0.5, 'Tuesday', 71.4), 2: ('RED', 1.0, 'Thursday', 71.4)},
+            'EWY': {0: ('RED', 0.8, 'Tuesday', 72.7), 1: ('GREEN', 0.8, 'Wednesday', 73.3), 2: ('RED', 1.0, 'Thursday', 65.4)},
+        }
+
+        ASIAN_COMBO_SIGNALS = {
+            'ES3.SI': [(3,'Green','Green',80.0),(4,'Green','Green',80.0),(1,'Green','Green',75.0)],
+            'G3B.SI': [(4,'Green','Green',76.2),(1,'Green','Green',75.0),(3,'Green','Red',68.2)],
+            '2800.HK': [(2,'Red','Green',65.2),(3,'Green','Red',63.9),(0,'Red','Red',60.9)],
+            '3067.HK': [(4,'Green','Green',61.9)],
+            '2828.HK': [(3,'Green','Red',65.2),(4,'Red','Green',65.0)],
+            '1306.T': [(3,'Red','Red',75.0),(4,'Red','Red',74.2),(0,'Red','Green',69.2)],
+            'EWJ': [(0,'Red','Red',77.3),(4,'Green','Red',75.0),(1,'Green','Green',75.0),(3,'Green','Red',70.8),(2,'Red','Red',66.7)],
+            'EWS': [(0,'Red','Green',83.9),(4,'Green','Green',71.4),(2,'Red','Green',65.0),(3,'Green','Green',64.3)],
+            'EWH': [(2,'Red','Green',76.2),(1,'Green','Green',66.7),(3,'Red','Red',66.7),(0,'Green','Green',65.8)],
+            'FXI': [(3,'Red','Red',75.0),(0,'Red','Green',70.4),(2,'Green','Green',65.0)],
+            'KWEB': [(0,'Red','Green',68.0),(3,'Red','Red',67.4)],
+            'EWT': [(3,'Red','Red',80.0),(4,'Red','Green',72.0),(0,'Red','Green',70.0),(2,'Red','Red',69.6),(1,'Red','Red',66.7)],
+            'EWY': [(2,'Green','Green',72.0),(0,'Red','Red',68.2),(4,'Green','Green',66.7),(1,'Green','Red',66.7)],
+        }
+
+        ASIAN_MULTIDAY_SIGNALS = {
+            '2828.HK': [(2,0.5,3,0,76.9)],
+            'EWJ': [(2,0.5,3,0,71.8)],
+            'EWH': [(2,0.5,3,0,72.2),(0,0.5,2,2,65.5)],
+            'EWT': [(2,0.5,3,0,71.4)],
+            'EWY': [(2,1.0,3,0,69.6),(2,1.0,4,1,69.6)],
+            'EWS': [(2,0.5,3,0,65.8)],
+        }
+
+        ASIAN_OVERNIGHT_SIGNALS = {
+            'ES3.SI': [(0,'Red',68.6),(2,'Red',67.5)],
+            'G3B.SI': [(0,'Red',73.1),(2,'Red',68.1)],
+            'CLR.SI': [(4,'Green',72.2),(1,'Red',69.0),(2,'Green',67.9),(0,'Red',66.4)],
+            '1306.T': [(0,'Red',66.1),(4,'Green',65.2)],
+            '2828.HK': [(0,None,66.7)],
+        }
+
+        signals = []
+        ticker_data = {}
+
+        raw = download_multi(list(ASIAN_TICKERS.keys()), period="10d")
+        for ticker, df in raw.items():
+            if df.empty:
+                continue
+            df['Return'] = (df['Close'] - df['Open']) / df['Open'] * 100
+            df['Color'] = df['Return'].apply(lambda x: 'Green' if x >= 0 else 'Red')
+            ticker_data[ticker] = df
+
+        for ticker, info in ASIAN_TICKERS.items():
+            if ticker not in ticker_data or len(ticker_data[ticker]) == 0:
+                continue
+            df = ticker_data[ticker]
+            today = df.iloc[-1]
+            today_dow = int(df.index[-1].dayofweek)
+            if today_dow > 4:
+                continue
+            today_ret = float(today['Return'])
+            today_color = 'Green' if today_ret >= 0 else 'Red'
+            today_name = DAY_NAMES[today_dow]
+            sl = info['sl']
+            tomorrow_dow = (today_dow + 1) % 5 if today_dow < 4 else 0
+
+            # Single-day signals
+            day_sigs = ASIAN_DAY_SIGNALS.get(ticker, {})
+            ds = day_sigs.get(today_dow)
+            if ds:
+                cond, thresh, trade_day, wr = ds
+                if today_color.upper() == cond and abs(today_ret) >= thresh:
+                    signals.append({
+                        'ticker': ticker, 'name': info['name'], 'market': info['market'],
+                        'type': 'DAY', 'day': trade_day,
+                        'signal': f"{today_color} {today_name} ({today_ret:+.2f}%) → Buy {trade_day}",
+                        'wr': wr, 'sl': sl,
+                    })
+
+            # Combo signals
+            combos = ASIAN_COMBO_SIGNALS.get(ticker, [])
+            if len(df) >= 2 and combos:
+                prev = df.iloc[-2]
+                prev_ret = float(prev['Return'])
+                prev_color = 'Green' if prev_ret >= 0 else 'Red'
+                for combo in combos:
+                    trade_dow, p2c, p1c, wr = combo
+                    if tomorrow_dow == trade_dow and prev_color == p2c and today_color == p1c:
+                        trade_day = DAY_NAMES[trade_dow]
+                        if not any(s['ticker'] == ticker and s['day'] == trade_day for s in signals):
+                            signals.append({
+                                'ticker': ticker, 'name': info['name'], 'market': info['market'],
+                                'type': 'COMBO', 'day': trade_day,
+                                'signal': f"{prev_color} + {today_color} → Buy {trade_day}",
+                                'wr': wr, 'sl': sl,
+                            })
+
+            # Multi-day signals
+            multidays = ASIAN_MULTIDAY_SIGNALS.get(ticker, [])
+            for md in multidays:
+                sig_dow, thresh, offset, trd_dow, wr = md
+                if today_dow == sig_dow and today_color == 'Red' and abs(today_ret) >= thresh:
+                    trade_day = DAY_NAMES[trd_dow]
+                    if not any(s['ticker'] == ticker and s['day'] == trade_day for s in signals):
+                        signals.append({
+                            'ticker': ticker, 'name': info['name'], 'market': info['market'],
+                            'type': 'MULTI-DAY', 'day': trade_day,
+                            'signal': f"Red {today_name} ({today_ret:+.2f}%) → Buy {trade_day} ({offset}d)",
+                            'wr': wr, 'sl': sl,
+                        })
+
+            # Overnight signals
+            overnights = ASIAN_OVERNIGHT_SIGNALS.get(ticker, [])
+            for ov in overnights:
+                sig_dow, color_filter, wr = ov
+                if today_dow == sig_dow:
+                    if color_filter is None or today_color == color_filter:
+                        next_dow = (today_dow + 1) % 5 if today_dow < 4 else 0
+                        signals.append({
+                            'ticker': ticker, 'name': info['name'], 'market': info['market'],
+                            'type': 'OVERNIGHT', 'day': f"{today_name}→{DAY_NAMES[next_dow]}",
+                            'signal': f"Buy {today_color} {today_name} close → Sell {DAY_NAMES[next_dow]} open",
+                            'wr': wr, 'sl': sl,
+                        })
+
+        signals.sort(key=lambda s: -s['wr'])
+
+        market_status = _market_status()
+
+        return jsonify({
+            "signals": signals,
+            "scan_time": datetime.now().isoformat(),
+            "tickers_scanned": len(ticker_data),
+            "market_status": market_status,
+        })
+
+    except Exception as e:
+        return jsonify({"signals": [], "error": str(e)})
+
+
+@app.route("/api/dip-scanner")
+def get_dip_signals():
+    """Scan all tickers for dip-buy signals and return scored results."""
+    try:
+        sys.path.insert(0, str(BASE_DIR.parent))
+        from dip_scanner import scan_dip_signals
+        results = scan_dip_signals()
+        return jsonify({"results": results, "scan_time": datetime.now().isoformat()})
+    except Exception as e:
+        return jsonify({"results": [], "error": str(e)})
 
 
 @app.route("/uploads/<path:filename>")
@@ -433,8 +857,190 @@ def serve_upload(filename):
     return send_from_directory(str(UPLOAD_DIR), filename)
 
 
+# ── FinRL Endpoints ─────────────────────────────────────────────────────────
+
+@app.route("/api/finrl-signals")
+def get_finrl_signals():
+    """Get FinRL RL-based trading signals for US tickers."""
+    try:
+        from finrl_engine import get_finrl_signals as _get_signals
+        tickers = request.args.get("tickers", "SPY,QQQ,IWM,QQQM,SPLG")
+        ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+        period = request.args.get("period", "1y")
+        retrain = request.args.get("retrain", "false").lower() == "true"
+
+        signals = _get_signals(tickers=ticker_list, training_period=period, retrain=retrain)
+        return jsonify({
+            "signals": signals,
+            "scan_time": datetime.now().isoformat(),
+            "model": "PPO (FinRL)",
+        })
+    except Exception as e:
+        logging.exception("FinRL signals error")
+        return jsonify({"signals": [], "error": str(e)})
+
+
+@app.route("/api/finrl-backtest")
+def get_finrl_backtest():
+    """Run a FinRL backtest for a single ticker."""
+    try:
+        from finrl_engine import get_finrl_backtest as _backtest
+        ticker = request.args.get("ticker", "SPY").upper()
+        period = request.args.get("period", "1y")
+        result = _backtest(ticker=ticker, period=period)
+        return jsonify(result)
+    except Exception as e:
+        logging.exception("FinRL backtest error")
+        return jsonify({"error": str(e)})
+
+
+@app.route("/api/unified-backtest")
+def get_unified_backtest():
+    """Run a unified strategy backtest."""
+    try:
+        from unified_backtest import run_unified_backtest
+
+        tickers_str = request.args.get("tickers", "SPY,QQQ,IWM")
+        tickers = [t.strip() for t in tickers_str.split(",")]
+        period = request.args.get("period", "6mo")
+        threshold = int(request.args.get("threshold", "60"))
+
+        result = run_unified_backtest(
+            tickers=tickers,
+            period=period,
+            score_threshold=threshold,
+        )
+        return jsonify(result)
+    except Exception as e:
+        logging.exception("Unified backtest error")
+        return jsonify({"error": str(e)})
+
+
+@app.route("/api/unified-signals")
+def get_unified_signals():
+    """Unified signal engine — composite scores from all sources."""
+    try:
+        from signal_engine import get_unified_signals as _unified
+        result = _unified()
+        return jsonify(result)
+    except Exception as e:
+        logging.exception("Unified signals error")
+        return jsonify({"signals": [], "error": str(e)})
+
+
+@app.route("/api/last-telegram-report")
+def get_last_telegram_report():
+    """Return the last report that was sent to Telegram."""
+    import os
+    cache_path = os.path.join(os.path.dirname(__file__), "..", "last_telegram_report.json")
+    cache_path = os.path.abspath(cache_path)
+    if not os.path.exists(cache_path):
+        return jsonify({"error": "No report sent yet"}), 404
+    with open(cache_path) as f:
+        return jsonify(json.load(f))
+
+
+# ── Alpaca Sync ──────────────────────────────────────────────────────────────
+
+@app.route("/api/sync-alpaca")
+def sync_alpaca():
+    """Sync current Alpaca positions to the dashboard as open trades."""
+    try:
+        from alpaca.trading.client import TradingClient
+
+        key = os.environ.get("APCA_API_KEY_ID", "")
+        secret = os.environ.get("APCA_API_SECRET_KEY", "")
+        if not key or not secret:
+            return jsonify({"error": "Alpaca keys not set"}), 400
+
+        client = TradingClient(key, secret, paper=True)
+        positions = client.get_all_positions()
+
+        conn = get_db()
+
+        # Get existing open trades (no exit_price) already in DB
+        existing_open = {}
+        for row in conn.execute(
+            "SELECT id, ticker FROM trades WHERE exit_price IS NULL AND signal_type = 'Alpaca Sync'"
+        ).fetchall():
+            existing_open[row["ticker"]] = row["id"]
+
+        # Current Alpaca tickers
+        alpaca_tickers = set()
+
+        synced = 0
+        for p in positions:
+            ticker = p.symbol.replace("/", "")
+            alpaca_tickers.add(ticker)
+            qty = abs(float(p.qty))
+            entry = float(p.avg_entry_price)
+            side = "Long" if float(p.qty) > 0 else "Short"
+
+            if ticker in existing_open:
+                # Update existing open trade
+                conn.execute(
+                    "UPDATE trades SET entry_price=?, shares=?, direction=? WHERE id=?",
+                    (entry, qty, side, existing_open[ticker])
+                )
+            else:
+                # Insert new open position
+                trade_id = uuid.uuid4().hex[:12]
+                conn.execute("""
+                    INSERT INTO trades (id, date, ticker, direction, signal_type,
+                        entry_price, shares, notes, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    trade_id,
+                    datetime.now().strftime("%Y-%m-%d"),
+                    ticker,
+                    side,
+                    "Alpaca Sync",
+                    entry,
+                    qty,
+                    "Open position synced from Alpaca",
+                    3,
+                ))
+                synced += 1
+
+        # Close trades that are no longer in Alpaca positions
+        for ticker, trade_id in existing_open.items():
+            if ticker not in alpaca_tickers:
+                # Position was closed on Alpaca — mark as closed
+                conn.execute(
+                    "UPDATE trades SET exit_price = entry_price, pnl = 0, "
+                    "return_pct = 0, exit_type = 'Closed on Alpaca', "
+                    "notes = 'Position closed — synced from Alpaca' "
+                    "WHERE id = ?",
+                    (trade_id,)
+                )
+
+        conn.commit()
+        conn.close()
+
+        pos_list = []
+        for p in positions:
+            pos_list.append({
+                "ticker": p.symbol.replace("/", ""),
+                "qty": float(p.qty),
+                "side": str(p.side),
+                "avg_entry": float(p.avg_entry_price),
+                "market_value": float(p.market_value),
+                "unrealized_pl": float(p.unrealized_pl),
+                "unrealized_plpc": float(p.unrealized_plpc) * 100,
+            })
+
+        return jsonify({
+            "synced": synced,
+            "positions": pos_list,
+        })
+
+    except Exception as e:
+        logging.exception("Alpaca sync error")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     print(f"\n  Trading Journal Dashboard")
     print(f"  Open: http://localhost:5050")
     print(f"  Database: {DB_PATH}\n")
-    app.run(host="127.0.0.1", port=5050, debug=True)
+    app.run(host="0.0.0.0", port=5050, debug=False)
