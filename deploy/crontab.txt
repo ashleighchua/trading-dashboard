@@ -18,3 +18,6 @@
 
 # Weekly report — 1pm Bangkok Sunday
 0 13 * * 0  cd /home/YOUR_USER/trading-analyses/dashboard && /usr/bin/python3 weekly_report.py >> /home/YOUR_USER/trading-analyses/weekly_report.log 2>&1
+
+# Monthly strategy report — 9am Bangkok on the 1st of each month
+0 9 1 * *  cd /home/YOUR_USER/trading-analyses/dashboard && /usr/bin/python3 monthly_report.py >> /home/YOUR_USER/trading-analyses/monthly_report.log 2>&1
