@@ -177,6 +177,23 @@ def delete_trade(trade_id):
     return jsonify({"status": "ok"})
 
 
+@app.route("/api/monthly-stats")
+def get_monthly_stats():
+    stats_path = BASE_DIR / "monthly_stats.json"
+    if not stats_path.exists():
+        return jsonify({
+            "month": None,
+            "generated": None,
+            "strategies": {
+                "Bear Rally Fade": {"trades": 0, "wr": None, "pf": None, "pnl": 0.0, "health": "skip"},
+                "GLD Pullback":    {"trades": 0, "wr": None, "pf": None, "pnl": 0.0, "health": "skip"},
+                "Monday Reversal": {"trades": 0, "wr": None, "pf": None, "pnl": 0.0, "health": "skip"},
+            }
+        })
+    with open(stats_path) as f:
+        return jsonify(json.load(f))
+
+
 @app.route("/api/stats")
 def get_stats():
     conn = get_db()
