@@ -97,11 +97,22 @@ Health column shows: ✅ On track / ⚠️ Below threshold / — (insufficient d
 
 ---
 
+## Critical Fix: push.sh Must Not Overwrite trades.db
+
+`deploy/push.sh` previously used `gcloud compute scp` to copy the entire `dashboard/` folder, which would overwrite `trades.db` on the server with the stale Mac version — wiping live trade history on every deploy. Fixed to use `rsync --exclude='trades.db' --exclude='monthly_stats.json'` so the live database and generated files are never touched.
+
 ## What Does NOT Change
 
 - Weekly report (`weekly_report.py`) — unchanged
 - Trade sync logic — unchanged
 - Existing historical trades recorded as `"Scanner Long"` — left as-is, excluded from per-strategy breakdown (shown as "Other" if present)
+
+## Edge Cases
+
+- **monthly_stats.json missing** (before first report runs): `/api/monthly-stats` returns empty default data, dashboard card shows "No data yet"
+- **Fewer than 10 trades** for a strategy: health check skipped, shows "— (insufficient data)"
+- **Profit Factor formula**: gross wins / gross losses. If no losses, PF = ∞ (shown as "∞"). If no wins, PF = 0.0
+- **Zero trades in month**: strategy row still shown with "0 trades — no activity this month"
 
 ---
 

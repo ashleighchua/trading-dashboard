@@ -8,11 +8,11 @@ INSTANCE=trading-botty
 REMOTE_USER=$(gcloud compute ssh $INSTANCE --zone=$ZONE --command="whoami" 2>/dev/null)
 REMOTE_PATH=/home/$REMOTE_USER/trading-analyses
 
-echo "Copying dashboard/ to $INSTANCE..."
-gcloud compute scp --recurse \
+echo "Copying dashboard/ to $INSTANCE (excluding trades.db and generated files)..."
+rsync -avz --exclude='trades.db' --exclude='monthly_stats.json' --exclude='__pycache__' --exclude='*.pyc' \
+  -e "ssh -i ~/.ssh/google_compute_engine" \
   "/Users/ashleighchua/trading analyses/dashboard/" \
-  $INSTANCE:$REMOTE_PATH/dashboard/ \
-  --zone=$ZONE
+  136.112.6.129:$REMOTE_PATH/dashboard/
 
 echo "Restarting services..."
 gcloud compute ssh $INSTANCE --zone=$ZONE \
