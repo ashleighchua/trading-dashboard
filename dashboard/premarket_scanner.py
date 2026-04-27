@@ -156,7 +156,12 @@ def record_entry(setup, order, qty):
         return
     symbol = setup["symbol"]
     side = "Long" if setup["side"] == "long" else "Short"
-    signal_type = "Bear Rally Fade" if setup["side"] == "short" else "Scanner Long"
+    if setup["side"] == "short":
+        signal_type = "Bear Rally Fade"
+    elif setup.get("symbol") == "SPY":
+        signal_type = "Monday Reversal"
+    else:
+        signal_type = "GLD Pullback"
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     trade_id = uuid.uuid4().hex[:12]
     try:
