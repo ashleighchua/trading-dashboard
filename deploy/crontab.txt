@@ -1,3 +1,4 @@
+CRON_TZ=Asia/Bangkok
 # Trading bot cron schedule (server timezone = Asia/Bangkok)
 # Replace YOUR_USER with output of `whoami` on the server
 
