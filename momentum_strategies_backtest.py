@@ -465,6 +465,8 @@ def run_momentum(raw, earnings_map, params):
         for t in list(open_positions.keys()):
             t_df = dfs.get(t)
             if t_df is None:
+                s = SECTOR.get(t, "Other")
+                open_sectors[s] = max(0, open_sectors.get(s, 0) - 1)
                 del open_positions[t]
                 continue
             if date_ts not in t_df.index:
