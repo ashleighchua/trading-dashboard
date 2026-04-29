@@ -440,17 +440,22 @@ def relative_strength_vs_spy(df, spy_df, idx, window=63):
     """
     if idx < window or len(spy_df) <= idx:
         return False
-    stock_ret = (df.iloc[idx]["Close"] - df.iloc[idx - window]["Close"]) / df.iloc[idx - window]["Close"]
+    stock_base = df.iloc[idx - window]["Close"]
+    if stock_base <= 0:
+        return False
+    stock_ret = (df.iloc[idx]["Close"] - stock_base) / stock_base
     spy_idx   = min(idx, len(spy_df) - 1)
     if spy_idx < window:
         return False
-    spy_ret = (spy_df.iloc[spy_idx]["Close"] - spy_df.iloc[spy_idx - window]["Close"]) / spy_df.iloc[spy_idx - window]["Close"]
+    spy_base = spy_df.iloc[spy_idx - window]["Close"]
+    if spy_base <= 0:
+        return False
+    spy_ret = (spy_df.iloc[spy_idx]["Close"] - spy_base) / spy_base
     return bool(stock_ret > spy_ret)
 
 
 def _test_breakout_helpers():
     """Inline tests for consolidation_pct, stage2_confirmed, relative_strength_vs_spy."""
-    import pandas as pd
 
     # ── consolidation_pct ────────────────────────────────────────────────────
     n = 20
