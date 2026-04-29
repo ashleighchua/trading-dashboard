@@ -385,3 +385,195 @@ def _test_helpers():
     logging.info("✅ helper tests passed")
 
 _test_helpers()
+
+# ── Strategy 1: EMA Dip Momentum ─────────────────────────────────────────────
+
+def simulate_long_trade(df, entry_idx, entry_price, trail_pct, max_hold):
+    """
+    Simulate a long trade starting at entry_idx with entry_price already slippage-adjusted.
+    Trail stop uses daily close. Exit at stop (apply exit slippage) or max_hold close.
+    Returns (exit_price_after_slippage, exit_idx, reason, hold_days).
+    """
+    stop = entry_price * (1 - trail_pct)
+    for j in range(entry_idx + 1, min(entry_idx + max_hold + 1, len(df))):
+        low   = df.iloc[j]["Low"]
+        close = df.iloc[j]["Close"]
+        # Raise stop if close is higher
+        new_stop = close * (1 - trail_pct)
+        if new_stop > stop:
+            stop = new_stop
+        if low <= stop:
+            return long_exit_price(stop), j, "stop", j - entry_idx
+    # Max hold: exit at close of last bar
+    exit_idx = min(entry_idx + max_hold, len(df) - 1)
+    return long_exit_price(df.iloc[exit_idx]["Close"]), exit_idx, "maxhold", exit_idx - entry_idx
+
+
+def run_momentum(raw, earnings_map, params):
+    """
+    Run EMA Dip Momentum for one parameter set.
+    Returns list of trade dicts.
+
+    Signal (end-of-day, entry next morning):
+      1. SPY close > SPY EMA-200 (market regime)
+      2. Stock EMA-fast > EMA-slow (individual uptrend)
+      3. 0% <= (ema_fast - close) / ema_fast * 100 <= pullback_max (pullback depth)
+      4. vol_ratio <= 0.8 (low-volume pullback = light selling)
+      5. No earnings in next 10 calendar days
+      6. No open position in this ticker
+
+    Position limits:
+      - Max 2 new positions opened per day (prioritised by lowest vol_ratio)
+      - Max 2 open positions per sector at any time
+    """
+    ema_fast     = params["ema_fast"]
+    ema_slow     = params["ema_slow"]
+    pullback_max = params["pullback_max"]
+    trail        = params["trail"]
+    max_hold     = params["max_hold"]
+
+    # Prepare all DataFrames with indicators
+    dfs = {}
+    for t in MOMENTUM_TICKERS:
+        df = get_df(raw, t)
+        if df is not None:
+            dfs[t] = add_indicators(df, ema_fast, ema_slow)
+
+    spy_df = dfs.get("SPY")
+    if spy_df is None:
+        raise RuntimeError("SPY data missing — cannot determine market regime")
+
+    # Build SPY EMA-200 series keyed by date
+    spy_ema200 = ema_series(spy_df["Close"].tolist(), 200)
+    spy_ema200_by_date = {
+        spy_df.index[i].date(): spy_ema200[i]
+        for i in range(len(spy_df))
+    }
+
+    backtest_start = pd.Timestamp(BACKTEST_START)
+    trades = []
+    open_positions = {}   # {ticker: exit_idx in that ticker's df}
+    open_sectors   = {}   # {sector: count of currently open positions}
+
+    # Iterate over all trading dates from SPY starting at backtest start
+    all_dates = spy_df[spy_df.index >= backtest_start].index
+
+    for date_ts in all_dates:
+        signal_date = date_ts.date()
+
+        # ── First: close out positions whose exit has passed ─────────────────
+        for t in list(open_positions.keys()):
+            t_df = dfs.get(t)
+            if t_df is None:
+                del open_positions[t]
+                continue
+            if date_ts not in t_df.index:
+                continue
+            cur_idx = t_df.index.get_loc(date_ts)
+            if open_positions[t] <= cur_idx:
+                s = SECTOR.get(t, "Other")
+                open_sectors[s] = max(0, open_sectors.get(s, 0) - 1)
+                del open_positions[t]
+
+        # ── Collect all valid signals for today ───────────────────────────────
+        new_today   = 0
+        day_signals = []
+
+        for ticker in MOMENTUM_TICKERS:
+            if ticker not in dfs:
+                continue
+            df = dfs[ticker]
+            if date_ts not in df.index:
+                continue
+            idx = df.index.get_loc(date_ts)
+
+            # Warmup: need at least ema_slow bars of data
+            if idx < ema_slow:
+                continue
+
+            # Skip if already in a position in this ticker
+            if ticker in open_positions and open_positions[ticker] > idx:
+                continue
+
+            row   = df.iloc[idx]
+            ema_f = row[f"ema{ema_fast}"]
+            ema_s = row[f"ema{ema_slow}"]
+            close = row["Close"]
+            vr    = row["vol_ratio"]
+
+            # 1. Market regime: SPY close > SPY EMA-200
+            spy_ema = spy_ema200_by_date.get(signal_date)
+            if spy_ema is None or spy_df.loc[date_ts, "Close"] <= spy_ema:
+                continue
+
+            # 2. Individual uptrend: ema_fast > ema_slow
+            if ema_f <= ema_s:
+                continue
+
+            # 3. Pullback depth: 0% to pullback_max% below ema_fast
+            if ema_f <= 0:
+                continue
+            pullback_pct = (ema_f - close) / ema_f * 100
+            if not (0 <= pullback_pct <= pullback_max):
+                continue
+
+            # 4. Low-volume pullback: vol_ratio <= 0.8
+            if vr is None or vr > 0.8:
+                continue
+
+            # 5. Earnings filter
+            if near_earnings(signal_date, ticker, earnings_map):
+                continue
+
+            day_signals.append({
+                "ticker":    ticker,
+                "vol_ratio": vr,
+                "idx":       idx,
+            })
+
+        # ── Sort by lowest vol_ratio (lightest selling pressure) ──────────────
+        day_signals.sort(key=lambda s: s["vol_ratio"])
+
+        # ── Enter positions (up to 2 per day, up to 2 per sector) ────────────
+        for sig in day_signals:
+            if new_today >= 2:
+                break
+            ticker = sig["ticker"]
+            idx    = sig["idx"]
+            df     = dfs[ticker]
+            sector = SECTOR.get(ticker, "Other")
+
+            # Sector cap: max 2 open per sector
+            if open_sectors.get(sector, 0) >= 2:
+                continue
+
+            # Need a next bar for entry
+            if idx + 1 >= len(df):
+                continue
+
+            entry_open  = df.iloc[idx + 1]["Open"]
+            entry_price = long_entry_price(entry_open)
+            qty         = calc_qty(entry_price, trail)
+
+            exit_price, exit_idx, reason, hold_days = simulate_long_trade(
+                df, idx + 1, entry_price, trail, max_hold
+            )
+            pnl_dollar = (exit_price - entry_price) * qty
+
+            trades.append({
+                "date":       signal_date,
+                "ticker":     ticker,
+                "entry":      round(entry_price, 4),
+                "exit":       round(exit_price, 4),
+                "qty":        qty,
+                "pnl_dollar": round(pnl_dollar, 2),
+                "side":       "long",
+                "reason":     reason,
+                "hold_days":  hold_days,
+            })
+
+            open_positions[ticker] = exit_idx
+            open_sectors[sector]   = open_sectors.get(sector, 0) + 1
+            new_today += 1
+
+    return trades
