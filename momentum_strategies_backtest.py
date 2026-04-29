@@ -145,3 +145,69 @@ def _test_get_df_shape(raw):
     assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
     assert df.index[0] < pd.Timestamp("2020-01-01"), "Warmup data missing"
     logging.info("✅ get_df sanity check passed")
+
+
+# ── Indicators ────────────────────────────────────────────────────────────────
+
+def ema_series(values, period):
+    """
+    Standard EMA. No lookahead — each value uses only data up to that bar.
+    Returns list same length as input.
+    """
+    k = 2.0 / (period + 1)
+    result = []
+    for i, v in enumerate(values):
+        if i == 0:
+            result.append(float(v))
+        else:
+            result.append(float(v) * k + result[-1] * (1 - k))
+    return result
+
+
+def volume_ratio_series(volumes, window=20):
+    """
+    Ratio of bar[i] volume to mean of bar[i-window : i] (prior window bars only).
+    Returns list same length as input; first `window` entries are None (warmup).
+    No lookahead — bar[i] average does NOT include bar[i] itself.
+    """
+    vols = list(volumes)
+    result = [None] * window
+    for i in range(window, len(vols)):
+        avg = sum(vols[i - window:i]) / window
+        result.append(vols[i] / avg if avg > 0 else None)
+    return result
+
+
+def add_indicators(df, ema_fast, ema_slow):
+    """Add EMA columns and volume ratio to a copy of df."""
+    df = df.copy()
+    closes = df["Close"].tolist()
+    vols   = df["Volume"].tolist()
+    df[f"ema{ema_fast}"] = ema_series(closes, ema_fast)
+    df[f"ema{ema_slow}"] = ema_series(closes, ema_slow)
+    df["vol_ratio"]      = volume_ratio_series(vols, 20)
+    return df
+
+
+def _test_indicators():
+    # EMA: first value equals first input
+    e = ema_series([10.0, 12.0, 11.0], 3)
+    assert e[0] == 10.0, f"EMA[0] should be 10.0, got {e[0]}"
+    # EMA period=1 is the value itself
+    e1 = ema_series([5.0, 8.0, 3.0], 1)
+    assert e1 == [5.0, 8.0, 3.0], f"EMA(1) should equal input, got {e1}"
+    # EMA length preserved
+    assert len(e) == 3
+
+    # volume_ratio: warmup is None
+    vr = volume_ratio_series([100] * 25, 20)
+    assert vr[:20] == [None] * 20, "Warmup should be None"
+    assert abs(vr[20] - 1.0) < 1e-9, f"Flat volume ratio should be 1.0, got {vr[20]}"
+    # Low volume bar
+    vols = [100] * 20 + [50]   # bar 20 is half the average
+    vr2 = volume_ratio_series(vols, 20)
+    assert abs(vr2[20] - 0.5) < 1e-9, f"Half-volume ratio should be 0.5, got {vr2[20]}"
+
+    logging.info("✅ indicator tests passed")
+
+_test_indicators()
