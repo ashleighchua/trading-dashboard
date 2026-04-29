@@ -1229,6 +1229,25 @@ def main():
         trading_days_is, trading_days_oos,
     )
 
+    # Run 50-Day Breakout Momentum — all param sets, pick best OOS profit factor
+    logging.info("Running 50-Day Breakout Momentum (%d param sets)...", len(BREAKOUT_PARAM_SETS))
+    breakout_results = []   # list of (result_dict, trades_list)
+    for params in BREAKOUT_PARAM_SETS:
+        trades = run_breakout(raw, earnings_map, params)
+        label = (
+            f"50-Day Breakout Set {params['label']} "
+            f"(vol≥{params['vol_min']}×, VCP {params['consol_15']}%/{params['consol_5']}%, "
+            f"trail {int(params['trail'] * 100)}%, hold {params['max_hold']}d)"
+        )
+        result = compute_stats(trades, label, trading_days_is, trading_days_oos)
+        breakout_results.append((result, trades))
+        logging.info(
+            "  Set %s: %d trades OOS PF=%.2f verdict=%s",
+            params["label"], result["oos"]["n"], result["oos"]["pf"], result["verdict"]
+        )
+
+    best_breakout, best_breakout_trades = max(breakout_results, key=lambda x: x[0]["oos"]["pf"])
+
     # Print results
     separator = "=" * 60
     print(f"\n{separator}")
@@ -1241,9 +1260,11 @@ def main():
     print()
     print_strategy_result(rev_result)
     print()
+    print_strategy_result(best_breakout)
+    print()
 
     # Combined stats (no re-running — reuse already-computed trades)
-    all_trades = best_momentum_trades + fade_trades + rev_trades
+    all_trades = best_momentum_trades + fade_trades + rev_trades + best_breakout_trades
     total_pnl  = sum(t["pnl_dollar"] for t in all_trades)
     print(separator)
     print("  COMBINED (all strategies, no overlap in SPY positions)")
@@ -1252,7 +1273,7 @@ def main():
     print(separator)
     print()
 
-    save_equity_curve([best_momentum, fade_result, rev_result])
+    save_equity_curve([best_momentum, fade_result, rev_result, best_breakout])
 
 
 if __name__ == "__main__":
