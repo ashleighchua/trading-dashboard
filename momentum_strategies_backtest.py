@@ -359,7 +359,7 @@ def compute_stats(trades, label, trading_days_is, trading_days_oos):
         verdict = "❌ FAIL"
 
     return {"label": label, "is": is_s, "oos": oos_s, "verdict": verdict,
-            "all_pnls": [t["pnl_dollar"] for t in trades]}
+            "all_pnls": sorted([(t["date"], t["pnl_dollar"]) for t in trades], key=lambda x: x[0])}
 
 
 def _test_helpers():
