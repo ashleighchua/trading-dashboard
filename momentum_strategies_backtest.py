@@ -97,6 +97,16 @@ MOMENTUM_PARAM_SETS = [
     {"label": "C", "ema_fast": 50, "ema_slow": 200, "pullback_max": 5.0, "trail": 0.04, "max_hold": 20},
 ]
 
+# ── Parameter sets for breakout (pre-defined, not swept) ─────────────────────
+BREAKOUT_PARAM_SETS = [
+    # Set A: standard O'Neil breakout — 6% trail, 15-day hold
+    {"label": "A", "lookback": 50, "vol_min": 1.5, "consol_15": 5.0, "consol_5": 3.0, "trail": 0.06, "max_hold": 15},
+    # Set B: more room for retest — 7% trail, 20-day hold
+    {"label": "B", "lookback": 50, "vol_min": 1.5, "consol_15": 5.0, "consol_5": 3.0, "trail": 0.07, "max_hold": 20},
+    # Set C: institutional conviction — tighter VCP, 2× volume, 7% trail, 25-day hold
+    {"label": "C", "lookback": 50, "vol_min": 2.0, "consol_15": 4.0, "consol_5": 2.0, "trail": 0.07, "max_hold": 25},
+]
+
 # ── Data download ─────────────────────────────────────────────────────────────
 
 def download_data():
@@ -388,6 +398,109 @@ def _test_helpers():
     logging.info("✅ helper tests passed")
 
 _test_helpers()
+
+# ── Breakout helpers ──────────────────────────────────────────────────────────
+
+def consolidation_pct(df, idx, window):
+    """
+    High-to-low range over the prior `window` bars as % of close at idx.
+    Uses only bars BEFORE idx (no lookahead). Returns None if insufficient data.
+    """
+    if idx < window:
+        return None
+    slice_ = df.iloc[idx - window:idx]
+    high   = slice_["High"].max()
+    low    = slice_["Low"].min()
+    close  = df.iloc[idx]["Close"]
+    if close <= 0:
+        return None
+    return (high - low) / close * 100
+
+
+def stage2_confirmed(df, idx):
+    """
+    Weinstein Stage 2: close > 150-day MA AND 150-day MA is rising.
+    Rising = MA computed at idx > MA computed at idx-5.
+    Returns False if insufficient data (need idx >= 155).
+    """
+    if idx < 155:
+        return False
+    ma_now  = df["Close"].iloc[idx - 150:idx].mean()
+    ma_prev = df["Close"].iloc[idx - 155:idx - 5].mean()
+    close   = df.iloc[idx]["Close"]
+    return bool(close > ma_now and ma_now > ma_prev)
+
+
+def relative_strength_vs_spy(df, spy_df, idx, window=63):
+    """
+    O'Neil RS: stock's window-bar return > SPY's window-bar return.
+    window=63 ≈ 3 months of trading days.
+    Aligns by bar index (valid — both DFs use the same yfinance trading calendar).
+    Returns False if insufficient data.
+    """
+    if idx < window or len(spy_df) <= idx:
+        return False
+    stock_ret = (df.iloc[idx]["Close"] - df.iloc[idx - window]["Close"]) / df.iloc[idx - window]["Close"]
+    spy_idx   = min(idx, len(spy_df) - 1)
+    if spy_idx < window:
+        return False
+    spy_ret = (spy_df.iloc[spy_idx]["Close"] - spy_df.iloc[spy_idx - window]["Close"]) / spy_df.iloc[spy_idx - window]["Close"]
+    return bool(stock_ret > spy_ret)
+
+
+def _test_breakout_helpers():
+    """Inline tests for consolidation_pct, stage2_confirmed, relative_strength_vs_spy."""
+    import pandas as pd
+
+    # ── consolidation_pct ────────────────────────────────────────────────────
+    n = 20
+    df_flat = pd.DataFrame({
+        "High":   [110.0] * n,
+        "Low":    [90.0]  * n,
+        "Close":  [100.0] * n,
+        "Open":   [100.0] * n,
+        "Volume": [1e6]   * n,
+    })
+    result = consolidation_pct(df_flat, 15, 10)
+    assert result is not None and abs(result - 20.0) < 1e-6, f"Expected 20.0, got {result}"
+    assert consolidation_pct(df_flat, 5, 10) is None  # insufficient data
+
+    # ── stage2_confirmed ─────────────────────────────────────────────────────
+    n2 = 200
+    prices_rising = [100.0 + i * 0.5 for i in range(n2)]
+    df_rising = pd.DataFrame({
+        "High": prices_rising, "Low": prices_rising, "Close": prices_rising,
+        "Open": prices_rising, "Volume": [1e6] * n2,
+    })
+    assert stage2_confirmed(df_rising, 160) is True
+
+    prices_flat = [100.0] * n2
+    df_flat2 = pd.DataFrame({
+        "High": prices_flat, "Low": prices_flat, "Close": prices_flat,
+        "Open": prices_flat, "Volume": [1e6] * n2,
+    })
+    assert stage2_confirmed(df_flat2, 160) is False
+    assert stage2_confirmed(df_rising, 100) is False  # insufficient data
+
+    # ── relative_strength_vs_spy ─────────────────────────────────────────────
+    n3 = 100
+    stock_prices = [100.0 + (20.0 / 63) * i for i in range(n3)]
+    spy_prices   = [100.0 + (10.0 / 63) * i for i in range(n3)]
+    df_stock = pd.DataFrame({"Close": stock_prices, "High": stock_prices,
+                              "Low": stock_prices, "Open": stock_prices, "Volume": [1e6]*n3})
+    df_spy   = pd.DataFrame({"Close": spy_prices,  "High": spy_prices,
+                              "Low": spy_prices,  "Open": spy_prices,  "Volume": [1e6]*n3})
+    assert relative_strength_vs_spy(df_stock, df_spy, 90) is True
+
+    df_stock_flat = pd.DataFrame({"Close": [100.0]*n3, "High": [100.0]*n3,
+                                   "Low": [100.0]*n3, "Open": [100.0]*n3, "Volume": [1e6]*n3})
+    assert relative_strength_vs_spy(df_stock_flat, df_spy, 90) is False
+    assert relative_strength_vs_spy(df_stock, df_spy, 10) is False  # insufficient data
+
+    logging.info("✅ breakout helper tests passed")
+
+
+_test_breakout_helpers()
 
 # ── Strategy 1: EMA Dip Momentum ─────────────────────────────────────────────
 
