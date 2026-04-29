@@ -779,3 +779,175 @@ def run_monday_reversal(raw):
         in_position_until = exit_idx
 
     return trades
+
+
+# ---------------------------------------------------------------------------
+# Task 8 — Output formatter, equity curve, main
+# ---------------------------------------------------------------------------
+
+def print_strategy_result(result):
+    """Print a formatted summary for one compute_stats result dict."""
+    label   = result["label"]
+    is_     = result["is"]
+    oos     = result["oos"]
+    verdict = result["verdict"]
+
+    emoji = {"PASS": "✅", "WARN": "⚠️", "FAIL": "❌"}.get(verdict, verdict)
+
+    print(f"  {label}")
+    print(
+        f"    In-sample  (2020–2022): {is_['trades']} trades | "
+        f"{is_['wr']:.1f}% WR | PF {is_['pf']:.2f} | ${is_['net_pnl']:+,.0f}"
+    )
+    print(
+        f"    Out-of-sample (2023–2026): {oos['trades']} trades | "
+        f"{oos['wr']:.1f}% WR | PF {oos['pf']:.2f} | ${oos['net_pnl']:+,.0f}"
+    )
+    print(
+        f"    Max drawdown: IS {is_['max_dd']:.1f}% / OOS {oos['max_dd']:.1f}%"
+        f" | Days in market: IS {is_['days_in_market']:.0f}% / OOS {oos['days_in_market']:.0f}%"
+    )
+    print(f"    Verdict: {emoji} {verdict}")
+
+
+def save_equity_curve(results, output_path="momentum_strategies_backtest.png"):
+    """
+    Plot individual and combined equity curves for all strategy results.
+    Each result dict must contain an 'all_pnls' key: list of (date, pnl_dollar) tuples.
+    """
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10), constrained_layout=True)
+
+    # --- Top panel: combined equity curve ---
+    ax_combined = axes[0]
+    all_entries = []
+    for r in results:
+        all_entries.extend(r["all_pnls"])
+    all_entries.sort(key=lambda x: x[0])
+
+    if all_entries:
+        dates_combined  = [e[0] for e in all_entries]
+        cumsum_combined = list(pd.Series([e[1] for e in all_entries]).cumsum())
+        ax_combined.plot(dates_combined, cumsum_combined, color="black", linewidth=2, label="Combined")
+        ax_combined.axhline(0, color="gray", linewidth=0.8, linestyle="--")
+        ax_combined.fill_between(dates_combined, cumsum_combined, 0,
+                                 where=[v >= 0 for v in cumsum_combined],
+                                 alpha=0.15, color="green")
+        ax_combined.fill_between(dates_combined, cumsum_combined, 0,
+                                 where=[v < 0 for v in cumsum_combined],
+                                 alpha=0.15, color="red")
+
+    # Mark IS/OOS split
+    split_ts = pd.Timestamp(SPLIT_DATE)
+    ax_combined.axvline(split_ts, color="steelblue", linewidth=1.2, linestyle=":", label=f"IS/OOS split ({SPLIT_DATE})")
+    ax_combined.set_title("Combined Equity Curve (all strategies)", fontsize=12, fontweight="bold")
+    ax_combined.set_ylabel("Cumulative P&L ($)")
+    ax_combined.legend(fontsize=9)
+    ax_combined.grid(True, alpha=0.3)
+
+    # --- Bottom panel: per-strategy equity curves ---
+    ax_per = axes[1]
+    colors = ["steelblue", "darkorange", "seagreen", "crimson", "purple"]
+    for idx, r in enumerate(results):
+        pnls = r["all_pnls"]
+        if not pnls:
+            continue
+        dates  = [e[0] for e in pnls]
+        cumsum = list(pd.Series([e[1] for e in pnls]).cumsum())
+        short_label = r["label"].split("(")[0].strip()
+        ax_per.plot(dates, cumsum, color=colors[idx % len(colors)],
+                    linewidth=1.5, label=short_label)
+
+    ax_per.axhline(0, color="gray", linewidth=0.8, linestyle="--")
+    ax_per.axvline(split_ts, color="steelblue", linewidth=1.2, linestyle=":")
+    ax_per.set_title("Per-Strategy Equity Curves", fontsize=12, fontweight="bold")
+    ax_per.set_ylabel("Cumulative P&L ($)")
+    ax_per.legend(fontsize=9)
+    ax_per.grid(True, alpha=0.3)
+
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    logging.info("Equity curve saved to %s", output_path)
+
+
+def main():
+    logging.info("Downloading data (%s → %s)...", DOWNLOAD_START, BACKTEST_END)
+    raw = download_data()
+
+    logging.info("Loading earnings dates...")
+    earnings_map = load_earnings_dates(ALL_TICKERS)
+
+    # Count trading days in each period (use SPY as calendar)
+    spy_df = get_df(raw, "SPY")
+    spy_df = spy_df[spy_df.index >= pd.Timestamp(BACKTEST_START)]
+    split_ts = pd.Timestamp(SPLIT_DATE)
+    trading_days_is  = int((spy_df.index < split_ts).sum())
+    trading_days_oos = int((spy_df.index >= split_ts).sum())
+
+    # Run EMA Dip Momentum — all param sets, pick best OOS profit factor
+    logging.info("Running EMA Dip Momentum (%d param sets)...", len(MOMENTUM_PARAM_SETS))
+    momentum_results = []   # list of (result_dict, trades_list)
+    for params in MOMENTUM_PARAM_SETS:
+        trades = run_momentum(raw, earnings_map, params)
+        label = (
+            f"EMA Dip Momentum Set {params['label']} "
+            f"(ema{params['ema_fast']}/{params['ema_slow']}, "
+            f"pullback≤{params['pullback_max']}%, "
+            f"trail {int(params['trail'] * 100)}%, "
+            f"hold {params['max_hold']}d)"
+        )
+        result = compute_stats(trades, label, trading_days_is, trading_days_oos)
+        momentum_results.append((result, trades))
+        logging.info(
+            "  Set %s: OOS PF=%.2f verdict=%s",
+            params["label"], result["oos"]["pf"], result["verdict"]
+        )
+
+    # Select best param set by OOS profit factor
+    best_momentum, best_momentum_trades = max(momentum_results, key=lambda x: x[0]["oos"]["pf"])
+
+    # Run Bear Rally Fade
+    logging.info("Running Bear Rally Fade...")
+    fade_trades = run_bear_rally_fade(raw, earnings_map)
+    fade_result = compute_stats(
+        fade_trades,
+        "Bear Rally Fade (Short, w/ slippage + earnings filter)",
+        trading_days_is, trading_days_oos,
+    )
+
+    # Run Monday Reversal
+    logging.info("Running Monday Reversal...")
+    rev_trades = run_monday_reversal(raw)
+    rev_result = compute_stats(
+        rev_trades,
+        "Monday Reversal (Long SPY, w/ slippage)",
+        trading_days_is, trading_days_oos,
+    )
+
+    # Print results
+    separator = "=" * 60
+    print(f"\n{separator}")
+    print("  STRATEGY COMPARISON — RIGOROUS BACKTEST")
+    print(separator)
+    print()
+    print_strategy_result(best_momentum)
+    print()
+    print_strategy_result(fade_result)
+    print()
+    print_strategy_result(rev_result)
+    print()
+
+    # Combined stats (no re-running — reuse already-computed trades)
+    all_trades = best_momentum_trades + fade_trades + rev_trades
+    total_pnl  = sum(t["pnl_dollar"] for t in all_trades)
+    print(separator)
+    print("  COMBINED (all strategies, no overlap in SPY positions)")
+    print(f"    Total trades: {len(all_trades)} | Net P&L: ${total_pnl:+,.0f}")
+    print("    Equity curve: [saved to momentum_strategies_backtest.png]")
+    print(separator)
+    print()
+
+    save_equity_curve([best_momentum, fade_result, rev_result])
+
+
+if __name__ == "__main__":
+    main()
