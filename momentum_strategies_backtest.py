@@ -96,3 +96,52 @@ MOMENTUM_PARAM_SETS = [
     {"label": "B", "ema_fast": 21, "ema_slow": 50, "pullback_max": 5.0, "trail": 0.03, "max_hold": 15},
     {"label": "C", "ema_fast": 50, "ema_slow": 200, "pullback_max": 5.0, "trail": 0.04, "max_hold": 20},
 ]
+
+# ── Data download ─────────────────────────────────────────────────────────────
+
+def download_data():
+    logging.info(f"Downloading {len(ALL_TICKERS)} tickers {DOWNLOAD_START}→{BACKTEST_END}...")
+    raw = yf.download(
+        ALL_TICKERS,
+        start=DOWNLOAD_START,
+        end=BACKTEST_END,
+        auto_adjust=True,
+        progress=False,
+        threads=True,
+    )
+    logging.info("Download complete.")
+    return raw
+
+
+def get_df(raw, ticker):
+    """Extract a clean OHLCV DataFrame for one ticker. Returns None if data missing."""
+    try:
+        if isinstance(raw.columns, pd.MultiIndex):
+            df = pd.DataFrame({
+                "Open":   raw["Open"][ticker],
+                "High":   raw["High"][ticker],
+                "Low":    raw["Low"][ticker],
+                "Close":  raw["Close"][ticker],
+                "Volume": raw["Volume"][ticker],
+            }).dropna()
+        else:
+            df = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
+        df.index = pd.to_datetime(df.index).tz_localize(None)
+        df = df[df.index >= DOWNLOAD_START]
+        if len(df) < 210:
+            logging.warning(f"{ticker}: only {len(df)} rows — skipping")
+            return None
+        return df
+    except Exception as e:
+        logging.warning(f"{ticker}: data extraction failed — {e}")
+        return None
+
+
+def _test_get_df_shape(raw):
+    """Sanity check: SPY should have data."""
+    df = get_df(raw, "SPY")
+    assert df is not None, "SPY data missing"
+    assert len(df) > 1000, f"SPY too few rows: {len(df)}"
+    assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    assert df.index[0] < pd.Timestamp("2020-01-01"), "Warmup data missing"
+    logging.info("✅ get_df sanity check passed")
