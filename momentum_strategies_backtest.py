@@ -901,6 +901,193 @@ def run_monday_reversal(raw):
 
     return trades
 
+# ── Strategy 4: 50-Day Breakout Momentum ─────────────────────────────────────
+
+def run_breakout(raw, earnings_map, params):
+    """
+    Run 50-Day Breakout Momentum for one parameter set.
+    Returns list of trade dicts.
+
+    Signal (end-of-day, entry next morning):
+      1. SPY close > SPY EMA-200 (market uptrend)
+      2. Stock close > highest close of prior `lookback` bars (50-day high)
+      3. Today's volume >= vol_min * 20-day avg volume (institutional surge)
+      4. 15-day high-to-low range <= consol_15% of close (VCP outer band)
+      5. 5-day high-to-low range  <= consol_5%  of close (VCP inner band)
+      6. Stage 2: close > 150-day MA AND MA rising (Weinstein)
+      7. Relative strength: stock 3-month return > SPY 3-month return (O'Neil)
+      8. No earnings within 10 calendar days
+      9. No open position in this ticker
+
+    Position limits:
+      - Max 2 new positions per day (prioritised by highest vol_ratio — most conviction)
+      - Max 2 open positions per sector at any time
+    """
+    lookback  = params["lookback"]
+    vol_min   = params["vol_min"]
+    consol_15 = params["consol_15"]
+    consol_5  = params["consol_5"]
+    trail     = params["trail"]
+    max_hold  = params["max_hold"]
+
+    # Prepare DataFrames with volume ratio column
+    dfs = {}
+    for t in MOMENTUM_TICKERS:
+        df = get_df(raw, t)
+        if df is not None:
+            vr = volume_ratio_series(df["Volume"].tolist(), window=20)
+            df = df.copy()
+            df["vol_ratio"] = vr
+            dfs[t] = df
+
+    spy_df = dfs.get("SPY")
+    if spy_df is None:
+        raise RuntimeError("SPY data missing — cannot determine market regime")
+
+    # SPY EMA-200 by date for market regime check
+    spy_ema200 = ema_series(spy_df["Close"].tolist(), 200)
+    spy_ema200_by_date = {
+        spy_df.index[i].date(): spy_ema200[i]
+        for i in range(len(spy_df))
+    }
+
+    backtest_start = pd.Timestamp(BACKTEST_START)
+    trades         = []
+    open_positions = {}   # {ticker: exit_idx in that ticker's df}
+    open_sectors   = {}   # {sector: count of currently open positions}
+
+    all_dates = spy_df[spy_df.index >= backtest_start].index
+
+    for date_ts in all_dates:
+        signal_date = date_ts.date()
+
+        # ── Close out expired positions ───────────────────────────────────────
+        for t in list(open_positions.keys()):
+            t_df = dfs.get(t)
+            if t_df is None:
+                s = SECTOR.get(t, "Other")
+                open_sectors[s] = max(0, open_sectors.get(s, 0) - 1)
+                del open_positions[t]
+                continue
+            if date_ts not in t_df.index:
+                continue
+            cur_idx = t_df.index.get_loc(date_ts)
+            if open_positions[t] <= cur_idx:
+                s = SECTOR.get(t, "Other")
+                open_sectors[s] = max(0, open_sectors.get(s, 0) - 1)
+                del open_positions[t]
+
+        # ── Collect all valid signals for today ───────────────────────────────
+        day_signals = []
+
+        for ticker in MOMENTUM_TICKERS:
+            if ticker not in dfs:
+                continue
+            df = dfs[ticker]
+            if date_ts not in df.index:
+                continue
+            idx = df.index.get_loc(date_ts)
+
+            # Need enough warmup for 150-day MA + 63-day RS + 50-day lookback
+            if idx < 155:
+                continue
+
+            # Skip if already in a position in this ticker
+            if ticker in open_positions and open_positions[ticker] > idx:
+                continue
+
+            close = df.iloc[idx]["Close"]
+            vr    = df.iloc[idx]["vol_ratio"]
+
+            # 1. Market regime: SPY close > SPY EMA-200
+            spy_ema = spy_ema200_by_date.get(signal_date)
+            if spy_ema is None or spy_df.loc[date_ts, "Close"] <= spy_ema:
+                continue
+
+            # 2. 50-day closing high: close > max of prior lookback closes
+            prior_high = df["Close"].iloc[idx - lookback:idx].max()
+            if close <= prior_high:
+                continue
+
+            # 3. Volume surge: vol_ratio >= vol_min
+            if vr is None or vr < vol_min:
+                continue
+
+            # 4. VCP outer band: 15-day consolidation
+            c15 = consolidation_pct(df, idx, 15)
+            if c15 is None or c15 > consol_15:
+                continue
+
+            # 5. VCP inner band: 5-day consolidation
+            c5 = consolidation_pct(df, idx, 5)
+            if c5 is None or c5 > consol_5:
+                continue
+
+            # 6. Stage 2 confirmation (Weinstein)
+            if not stage2_confirmed(df, idx):
+                continue
+
+            # 7. Relative strength vs SPY (O'Neil)
+            if not relative_strength_vs_spy(df, spy_df, idx):
+                continue
+
+            # 8. Earnings filter
+            if near_earnings(signal_date, ticker, earnings_map):
+                continue
+
+            day_signals.append({
+                "ticker":    ticker,
+                "vol_ratio": vr,
+                "idx":       idx,
+            })
+
+        # ── Sort by highest vol_ratio (strongest conviction breakout) ─────────
+        day_signals.sort(key=lambda s: s["vol_ratio"], reverse=True)
+
+        # ── Enter positions (up to 2 per day, up to 2 per sector) ────────────
+        new_today = 0
+        for sig in day_signals:
+            if new_today >= 2:
+                break
+            ticker = sig["ticker"]
+            idx    = sig["idx"]
+            df     = dfs[ticker]
+            sector = SECTOR.get(ticker, "Other")
+
+            # Sector cap
+            if open_sectors.get(sector, 0) >= 2:
+                continue
+
+            # Need a next bar for entry
+            if idx + 1 >= len(df):
+                continue
+
+            entry_open  = df.iloc[idx + 1]["Open"]
+            entry_price = long_entry_price(entry_open)
+            qty         = calc_qty(entry_price, trail)
+
+            exit_price, exit_idx, reason, hold_days = simulate_long_trade(
+                df, idx + 1, entry_price, trail, max_hold
+            )
+            pnl_dollar = (exit_price - entry_price) * qty
+
+            trades.append({
+                "date":       signal_date,
+                "ticker":     ticker,
+                "entry":      round(entry_price, 4),
+                "exit":       round(exit_price, 4),
+                "qty":        qty,
+                "pnl_dollar": round(pnl_dollar, 2),
+                "side":       "long",
+                "reason":     reason,
+                "hold_days":  hold_days,
+            })
+
+            open_positions[ticker] = exit_idx
+            open_sectors[sector]   = open_sectors.get(sector, 0) + 1
+            new_today += 1
+
+    return trades
 
 # ---------------------------------------------------------------------------
 # Task 8 — Output formatter, equity curve, main
