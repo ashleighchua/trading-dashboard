@@ -792,22 +792,20 @@ def print_strategy_result(result):
     oos     = result["oos"]
     verdict = result["verdict"]
 
-    emoji = {"PASS": "✅", "WARN": "⚠️", "FAIL": "❌"}.get(verdict, verdict)
-
     print(f"  {label}")
     print(
-        f"    In-sample  (2020–2022): {is_['trades']} trades | "
-        f"{is_['wr']:.1f}% WR | PF {is_['pf']:.2f} | ${is_['net_pnl']:+,.0f}"
+        f"    In-sample  (2020–2022): {is_['n']} trades | "
+        f"{is_['wr']:.1f}% WR | PF {is_['pf']:.2f} | ${is_['pnl']:+,.0f}"
     )
     print(
-        f"    Out-of-sample (2023–2026): {oos['trades']} trades | "
-        f"{oos['wr']:.1f}% WR | PF {oos['pf']:.2f} | ${oos['net_pnl']:+,.0f}"
+        f"    Out-of-sample (2023–2026): {oos['n']} trades | "
+        f"{oos['wr']:.1f}% WR | PF {oos['pf']:.2f} | ${oos['pnl']:+,.0f}"
     )
     print(
-        f"    Max drawdown: IS {is_['max_dd']:.1f}% / OOS {oos['max_dd']:.1f}%"
-        f" | Days in market: IS {is_['days_in_market']:.0f}% / OOS {oos['days_in_market']:.0f}%"
+        f"    Max drawdown: IS {is_['max_dd_pct']:.1f}% / OOS {oos['max_dd_pct']:.1f}%"
+        f" | Days in market: IS {is_['days_in_mkt_pct']:.0f}% / OOS {oos['days_in_mkt_pct']:.0f}%"
     )
-    print(f"    Verdict: {emoji} {verdict}")
+    print(f"    Verdict: {verdict}")
 
 
 def save_equity_curve(results, output_path="momentum_strategies_backtest.png"):
