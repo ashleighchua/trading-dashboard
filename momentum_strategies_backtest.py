@@ -579,3 +579,203 @@ def run_momentum(raw, earnings_map, params):
             new_today += 1
 
     return trades
+
+# ── Strategy 2: Bear Rally Fade ───────────────────────────────────────────────
+
+def simulate_short_trade(df, entry_idx, entry_price, trail_pct, max_hold):
+    """
+    Simulate a short trade. Trail stop uses daily close.
+    For shorts: stop starts ABOVE entry and trails DOWN as price falls.
+    entry_price is already slippage-adjusted (below open).
+    Returns (exit_price_after_slippage, exit_idx, reason, hold_days).
+    """
+    stop = entry_price * (1 + trail_pct)
+    for j in range(entry_idx + 1, min(entry_idx + max_hold + 1, len(df))):
+        high  = df.iloc[j]["High"]
+        close = df.iloc[j]["Close"]
+        # Lower stop as price falls (trail down)
+        new_stop = close * (1 + trail_pct)
+        if new_stop < stop:
+            stop = new_stop
+        if high >= stop:
+            return short_exit_price(stop), j, "stop", j - entry_idx
+    exit_idx = min(entry_idx + max_hold, len(df) - 1)
+    return short_exit_price(df.iloc[exit_idx]["Close"]), exit_idx, "maxhold", exit_idx - entry_idx
+
+
+def run_bear_rally_fade(raw, earnings_map):
+    """
+    Bear Rally Fade (short) — PLTR, FXI, KWEB, QQQ, IWM.
+    Signal: close < EMA-200 AND rallied >= 3% from 5-day low.
+    Exit: 1.5% trailing stop OR 10-day max hold.
+    Earnings filter applied to PLTR only (ETFs have no earnings).
+    Slippage 0.1% per side.
+    One position at a time across all tickers.
+    """
+    TRAIL            = 0.015
+    MAX_HOLD         = 10
+    RALLY_THRESHOLD  = 3.0   # percent rally from 5-day low
+
+    dfs = {}
+    for t in FADE_TICKERS:
+        df = get_df(raw, t)
+        if df is not None:
+            df = df.copy()
+            df["ema200"] = ema_series(df["Close"].tolist(), 200)
+            dfs[t] = df
+
+    backtest_start = pd.Timestamp(BACKTEST_START)
+    trades = []
+    in_position  = None    # ticker currently held short
+    exit_idx_map = {}      # {ticker: exit_idx in that ticker's df}
+
+    spy_df    = get_df(raw, "SPY")
+    all_dates = spy_df[spy_df.index >= backtest_start].index
+
+    for date_ts in all_dates:
+        signal_date = date_ts.date()
+
+        # Clear position if it has closed
+        if in_position and in_position in exit_idx_map:
+            t_df = dfs.get(in_position)
+            if t_df is not None and date_ts in t_df.index:
+                cur_idx = t_df.index.get_loc(date_ts)
+                if exit_idx_map[in_position] <= cur_idx:
+                    in_position = None
+
+        if in_position:
+            continue
+
+        for ticker in FADE_TICKERS:
+            if ticker not in dfs:
+                continue
+            df = dfs[ticker]
+            if date_ts not in df.index:
+                continue
+            idx = df.index.get_loc(date_ts)
+            if idx < 205:    # EMA-200 warmup
+                continue
+
+            row    = df.iloc[idx]
+            close  = row["Close"]
+            ema200 = row["ema200"]
+
+            # 1. Downtrend: close < EMA-200
+            if close >= ema200:
+                continue
+
+            # 2. Bear rally: close is >= 3% above 5-day low
+            low5      = df.iloc[idx - 4:idx + 1]["Low"].min()
+            rally_pct = (close - low5) / low5 * 100
+            if rally_pct < RALLY_THRESHOLD:
+                continue
+
+            # 3. Earnings filter (PLTR only — ETFs have no earnings)
+            if ticker == "PLTR" and near_earnings(signal_date, ticker, earnings_map):
+                continue
+
+            # Need next bar for entry
+            if idx + 1 >= len(df):
+                continue
+
+            entry_open  = df.iloc[idx + 1]["Open"]
+            entry_price = short_entry_price(entry_open)
+            qty         = calc_qty(entry_price, TRAIL)
+
+            exit_price, ex_idx, reason, hold_days = simulate_short_trade(
+                df, idx + 1, entry_price, TRAIL, MAX_HOLD
+            )
+            pnl_dollar = (entry_price - exit_price) * qty   # short P&L
+
+            trades.append({
+                "date":       signal_date,
+                "ticker":     ticker,
+                "entry":      round(entry_price, 4),
+                "exit":       round(exit_price, 4),
+                "qty":        qty,
+                "pnl_dollar": round(pnl_dollar, 2),
+                "side":       "short",
+                "reason":     reason,
+                "hold_days":  hold_days,
+            })
+
+            in_position = ticker
+            exit_idx_map[ticker] = ex_idx
+            break    # one position at a time
+
+    return trades
+
+
+# ── Strategy 3: Monday Reversal ───────────────────────────────────────────────
+
+def run_monday_reversal(raw):
+    """
+    Monday Reversal (long SPY).
+    Signal: weekday == Monday AND previous Friday close return <= -0.75%.
+    Exit: 1.5% trailing stop OR 5-day max hold.
+    Slippage 0.1% per side. One position at a time.
+    """
+    TRAIL      = 0.015
+    MAX_HOLD   = 5
+    FRI_THRESH = -0.75    # percent
+
+    df = get_df(raw, "SPY")
+    if df is None:
+        raise RuntimeError("SPY data missing for Monday Reversal")
+
+    backtest_start     = pd.Timestamp(BACKTEST_START)
+    trades             = []
+    in_position_until  = -1    # row index until which we're occupied
+
+    for i in range(1, len(df)):
+        date_ts = df.index[i]
+        if date_ts < backtest_start:
+            continue
+        if i <= in_position_until:
+            continue
+
+        # Must be Monday (weekday 0)
+        if date_ts.weekday() != 0:
+            continue
+
+        # Find the most recent Friday
+        fri_idx = i - 1
+        while fri_idx >= 0 and df.index[fri_idx].weekday() != 4:
+            fri_idx -= 1
+        if fri_idx < 1:
+            continue
+
+        fri_close = df.iloc[fri_idx]["Close"]
+        thu_close = df.iloc[fri_idx - 1]["Close"]
+        if thu_close <= 0:
+            continue
+        fri_return = (fri_close - thu_close) / thu_close * 100
+
+        if fri_return > FRI_THRESH:
+            continue
+
+        # Signal fires — entry at Monday's open with slippage
+        entry_open  = df.iloc[i]["Open"]
+        entry_price = long_entry_price(entry_open)
+        qty         = calc_qty(entry_price, TRAIL)
+
+        exit_price, exit_idx, reason, hold_days = simulate_long_trade(
+            df, i, entry_price, TRAIL, MAX_HOLD
+        )
+        pnl_dollar = (exit_price - entry_price) * qty
+
+        trades.append({
+            "date":       date_ts.date(),
+            "ticker":     "SPY",
+            "entry":      round(entry_price, 4),
+            "exit":       round(exit_price, 4),
+            "qty":        qty,
+            "pnl_dollar": round(pnl_dollar, 2),
+            "side":       "long",
+            "reason":     reason,
+            "hold_days":  hold_days,
+        })
+
+        in_position_until = exit_idx
+
+    return trades
