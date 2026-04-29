@@ -211,3 +211,177 @@ def _test_indicators():
     logging.info("✅ indicator tests passed")
 
 _test_indicators()
+
+# ── Sizing & slippage helpers ─────────────────────────────────────────────────
+
+def calc_qty(entry_price, stop_pct, max_risk=MAX_RISK):
+    """Shares = max_risk / (entry_price * stop_pct). Minimum 1."""
+    stop_distance = entry_price * stop_pct
+    return max(1, int(max_risk / stop_distance))
+
+
+def long_entry_price(open_price):
+    """Apply 0.1% slippage on long entry (buy slightly above open)."""
+    return open_price * (1 + SLIP)
+
+
+def long_exit_price(price):
+    """Apply 0.1% slippage on long exit (sell slightly below)."""
+    return price * (1 - SLIP)
+
+
+def short_entry_price(open_price):
+    """Apply 0.1% slippage on short entry (sell slightly below open)."""
+    return open_price * (1 - SLIP)
+
+
+def short_exit_price(price):
+    """Apply 0.1% slippage on short exit (buy slightly above)."""
+    return price * (1 + SLIP)
+
+
+# ── Earnings filter ───────────────────────────────────────────────────────────
+
+def load_earnings_dates(tickers):
+    """
+    Returns {ticker: sorted list of datetime.date}.
+    Falls back to [] with a warning if yfinance has no data.
+    ETFs are skipped (no earnings).
+    """
+    ETF_SET = {"SPY", "QQQ", "IWM", "XLK", "XLF", "XLE", "FXI", "KWEB"}
+    result = {}
+    for t in tickers:
+        if t in ETF_SET:
+            result[t] = []
+            continue
+        try:
+            ed = yf.Ticker(t).earnings_dates
+            if ed is None or ed.empty:
+                logging.warning(f"Earnings filter: no data for {t} — filter disabled for this ticker")
+                result[t] = []
+            else:
+                result[t] = sorted(
+                    idx.date() if hasattr(idx, "date") else idx
+                    for idx in ed.index
+                )
+        except Exception as e:
+            logging.warning(f"Earnings filter: {t} fetch failed ({e}) — filter disabled")
+            result[t] = []
+    return result
+
+
+def near_earnings(signal_date, ticker, earnings_map, window_calendar_days=10):
+    """
+    True if any earnings date falls in (signal_date, signal_date + window_calendar_days].
+    window_calendar_days=10 ≈ 5 trading days (conservative).
+    """
+    dates = earnings_map.get(ticker, [])
+    if not dates:
+        return False
+    end = signal_date + timedelta(days=window_calendar_days)
+    return any(signal_date < d <= end for d in dates)
+
+
+# ── Stats ─────────────────────────────────────────────────────────────────────
+
+def compute_stats(trades, label, trading_days_is, trading_days_oos):
+    """
+    trades: list of dicts with keys:
+        date (datetime.date), ticker (str), entry (float), exit (float),
+        pnl_dollar (float), side (str), reason (str), hold_days (int)
+
+    trading_days_is:  count of trading days in in-sample period
+    trading_days_oos: count of trading days in out-of-sample period
+
+    Returns dict with full stats and a verdict string.
+    """
+    if not trades:
+        return {
+            "label": label, "n": 0, "verdict": "❌ FAIL",
+            "is": {}, "oos": {}, "all_pnls": [],
+        }
+
+    split = pd.Timestamp(SPLIT_DATE)
+    is_trades  = [t for t in trades if pd.Timestamp(t["date"]) <  split]
+    oos_trades = [t for t in trades if pd.Timestamp(t["date"]) >= split]
+
+    def _stats_block(group, total_days):
+        if not group:
+            return {"n": 0, "wr": 0.0, "pf": 0.0, "pnl": 0.0,
+                    "avg_win": 0.0, "avg_loss": 0.0, "max_dd_pct": 0.0, "days_in_mkt_pct": 0.0}
+        pnls   = [t["pnl_dollar"] for t in group]
+        wins   = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p <= 0]
+        wr     = len(wins) / len(pnls) * 100
+        gp     = sum(wins) if wins else 0.0
+        gl     = abs(sum(losses)) if losses else 0.0
+        pf     = gp / gl if gl > 0 else float("inf")
+        avg_w  = gp / len(wins) if wins else 0.0
+        avg_l  = gl / len(losses) if losses else 0.0
+
+        # Max drawdown on cumulative P&L series
+        cum, peak, max_dd = 0.0, 0.0, 0.0
+        for p in pnls:
+            cum += p
+            peak = max(peak, cum)
+            dd = (cum - peak) / (abs(peak) + 1e-9) * 100
+            max_dd = min(max_dd, dd)
+
+        # Days in market: sum of hold durations / total trading days
+        hold_days = sum(t.get("hold_days", 1) for t in group)
+        dim = hold_days / total_days * 100 if total_days > 0 else 0.0
+
+        return {
+            "n": len(group),
+            "wr": round(wr, 1),
+            "pf": round(pf, 2) if pf != float("inf") else 999.0,
+            "pnl": round(sum(pnls), 2),
+            "avg_win": round(avg_w, 2),
+            "avg_loss": round(avg_l, 2),
+            "max_dd_pct": round(abs(max_dd), 1),
+            "days_in_mkt_pct": round(dim, 1),
+        }
+
+    is_s  = _stats_block(is_trades,  trading_days_is)
+    oos_s = _stats_block(oos_trades, trading_days_oos)
+
+    # Verdict: based on out-of-sample performance
+    oos_wr_ok  = oos_s["n"] >= 10 and oos_s["wr"] >= 55.0
+    oos_pf_ok  = oos_s["pf"] >= 1.5
+    oos_dd_ok  = oos_s["max_dd_pct"] <= 25.0
+    drift_ok   = is_s["n"] > 0 and oos_s["n"] > 0 and abs(oos_s["wr"] - is_s["wr"]) <= 10.0
+
+    if oos_wr_ok and oos_pf_ok and oos_dd_ok and drift_ok:
+        verdict = "✅ PASS"
+    elif oos_wr_ok and oos_pf_ok and (not oos_dd_ok or not drift_ok):
+        verdict = "⚠️  WARN"
+    else:
+        verdict = "❌ FAIL"
+
+    return {"label": label, "is": is_s, "oos": oos_s, "verdict": verdict,
+            "all_pnls": [t["pnl_dollar"] for t in trades]}
+
+
+def _test_helpers():
+    # calc_qty: $100 risk, $50 stock, 2% stop → stop_distance=$1 → qty=100
+    assert calc_qty(50.0, 0.02) == 100, f"Expected 100, got {calc_qty(50.0, 0.02)}"
+    # calc_qty: minimum 1 (stop_distance=$200 > MAX_RISK=$100 → floor to 0 → clamp to 1)
+    assert calc_qty(10000.0, 0.02) == 1, f"Expected 1, got {calc_qty(10000.0, 0.02)}"
+    # Slippage on entry/exit
+    assert abs(long_entry_price(100.0) - 100.1) < 1e-9
+    assert abs(long_exit_price(100.0) - 99.9) < 1e-9
+    assert abs(short_entry_price(100.0) - 99.9) < 1e-9
+    assert abs(short_exit_price(100.0) - 100.1) < 1e-9
+    # near_earnings: no dates → False
+    assert not near_earnings(date(2024, 1, 10), "AAPL", {"AAPL": []})
+    # near_earnings: earnings 5 days later → True
+    assert near_earnings(date(2024, 1, 10), "AAPL", {"AAPL": [date(2024, 1, 15)]})
+    # near_earnings: earnings 15 days later → False (outside 10-day window)
+    assert not near_earnings(date(2024, 1, 10), "AAPL", {"AAPL": [date(2024, 1, 25)]})
+    # compute_stats: empty trades → FAIL verdict
+    result = compute_stats([], "test", 100, 100)
+    assert result["verdict"] == "❌ FAIL"
+    assert result["n"] == 0
+    logging.info("✅ helper tests passed")
+
+_test_helpers()
