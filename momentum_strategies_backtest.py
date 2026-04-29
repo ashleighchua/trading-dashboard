@@ -70,8 +70,27 @@ FADE_TICKERS = ["PLTR", "FXI", "KWEB", "QQQ", "IWM"]
 # ── Monday reversal universe ──────────────────────────────────────────────────
 REVERSAL_TICKERS = ["SPY"]
 
+# ── S&P 500 expanded universe (fetched from Wikipedia, combined with core list) ─
+def _fetch_sp500_tickers():
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; trading-backtest/1.0)"},
+        )
+        html = urllib.request.urlopen(req).read()
+        tables = pd.read_html(pd.io.common.BytesIO(html))
+        tickers = tables[0]["Symbol"].str.replace(".", "-", regex=False).tolist()
+        logging.info("Fetched %d S&P 500 tickers from Wikipedia", len(tickers))
+        return tickers
+    except Exception as e:
+        logging.warning("Could not fetch S&P 500 list (%s) — using core universe only", e)
+        return []
+
+BREAKOUT_UNIVERSE = sorted(set(MOMENTUM_TICKERS + _fetch_sp500_tickers()))
+
 # ── All tickers (downloaded once) ────────────────────────────────────────────
-ALL_TICKERS = sorted(set(MOMENTUM_TICKERS + FADE_TICKERS + REVERSAL_TICKERS))
+ALL_TICKERS = sorted(set(BREAKOUT_UNIVERSE + FADE_TICKERS + REVERSAL_TICKERS))
 
 # ── Sector map ────────────────────────────────────────────────────────────────
 SECTOR = {
@@ -930,9 +949,9 @@ def run_breakout(raw, earnings_map, params):
     trail     = params["trail"]
     max_hold  = params["max_hold"]
 
-    # Prepare DataFrames with volume ratio column
+    # Prepare DataFrames with volume ratio column (full S&P 500 universe)
     dfs = {}
-    for t in MOMENTUM_TICKERS:
+    for t in BREAKOUT_UNIVERSE:
         df = get_df(raw, t)
         if df is not None:
             vr = volume_ratio_series(df["Volume"].tolist(), window=20)
@@ -980,7 +999,7 @@ def run_breakout(raw, earnings_map, params):
         # ── Collect all valid signals for today ───────────────────────────────
         day_signals = []
 
-        for ticker in MOMENTUM_TICKERS:
+        for ticker in BREAKOUT_UNIVERSE:
             if ticker not in dfs:
                 continue
             df = dfs[ticker]
