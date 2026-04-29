@@ -319,17 +319,20 @@ def compute_stats(trades, label, trading_days_is, trading_days_oos):
         avg_w  = gp / len(wins) if wins else 0.0
         avg_l  = gl / len(losses) if losses else 0.0
 
-        # Max drawdown on cumulative P&L series
-        cum, peak, max_dd = 0.0, 0.0, 0.0
+        # Max drawdown: peak-to-trough dollar loss, expressed as % of $10k notional
+        # ($10k = ~100x $100-per-trade risk; avoids division-by-zero when equity starts at 0)
+        NOTIONAL = 10_000.0
+        cum, peak, max_dd_dollar = 0.0, 0.0, 0.0
         for p in pnls:
             cum += p
             peak = max(peak, cum)
-            dd = (cum - peak) / (abs(peak) + 1e-9) * 100
-            max_dd = min(max_dd, dd)
+            max_dd_dollar = min(max_dd_dollar, cum - peak)
+        max_dd_pct = abs(max_dd_dollar) / NOTIONAL * 100
 
-        # Days in market: sum of hold durations / total trading days
-        hold_days = sum(t.get("hold_days", 1) for t in group)
-        dim = hold_days / total_days * 100 if total_days > 0 else 0.0
+        # Days in market: fraction of trading days with ≥1 open position
+        # Cap each trade's hold at total_days to avoid >100% from concurrent positions
+        hold_days = sum(min(t.get("hold_days", 1), total_days) for t in group)
+        dim = min(hold_days / total_days * 100, 100.0) if total_days > 0 else 0.0
 
         return {
             "n": len(group),
@@ -338,7 +341,7 @@ def compute_stats(trades, label, trading_days_is, trading_days_oos):
             "pnl": round(sum(pnls), 2),
             "avg_win": round(avg_w, 2),
             "avg_loss": round(avg_l, 2),
-            "max_dd_pct": round(abs(max_dd), 1),
+            "max_dd_pct": round(max_dd_pct, 1),
             "days_in_mkt_pct": round(dim, 1),
         }
 
