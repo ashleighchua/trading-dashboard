@@ -118,12 +118,12 @@ MOMENTUM_PARAM_SETS = [
 
 # ── Parameter sets for breakout (pre-defined, not swept) ─────────────────────
 BREAKOUT_PARAM_SETS = [
-    # Set A: standard O'Neil breakout — 6% trail, 15-day hold
-    {"label": "A", "lookback": 50, "vol_min": 1.5, "consol_15": 5.0, "consol_5": 3.0, "trail": 0.06, "max_hold": 15},
-    # Set B: more room for retest — 7% trail, 20-day hold
-    {"label": "B", "lookback": 50, "vol_min": 1.5, "consol_15": 5.0, "consol_5": 3.0, "trail": 0.07, "max_hold": 20},
-    # Set C: institutional conviction — tighter VCP, 2× volume, 7% trail, 25-day hold
-    {"label": "C", "lookback": 50, "vol_min": 2.0, "consol_15": 4.0, "consol_5": 2.0, "trail": 0.07, "max_hold": 25},
+    # Set A: O'Neil standard — 8% trail, 20-day hold
+    {"label": "A", "lookback": 50, "vol_min": 1.5, "consol_15": 5.0, "consol_5": 3.0, "trail": 0.08, "max_hold": 20},
+    # Set B: let winners run — 8% trail, 30-day hold
+    {"label": "B", "lookback": 50, "vol_min": 1.5, "consol_15": 5.0, "consol_5": 3.0, "trail": 0.08, "max_hold": 30},
+    # Set C: maximum patience — 8% trail, 40-day hold
+    {"label": "C", "lookback": 50, "vol_min": 1.5, "consol_15": 5.0, "consol_5": 3.0, "trail": 0.08, "max_hold": 40},
 ]
 
 # ── Data download ─────────────────────────────────────────────────────────────
