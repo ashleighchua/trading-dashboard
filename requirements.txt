@@ -1,16 +1,9 @@
-# Core
 flask
-flask-httpauth
 pandas
 numpy
 pytz
 python-dotenv
-
-# Data providers
-alpaca-py                 # Alpaca Markets API (primary, US stocks)
-yfinance                  # Fallback for non-US tickers (*.SI, *.HK, *.T)
-
-# FinRL / Reinforcement Learning (optional but recommended)
-stable-baselines3         # PPO/A2C/DDPG agents
-gymnasium                 # Gym environment for RL
-torch                     # PyTorch backend for SB3
+requests
+yfinance
+alpaca-py
+werkzeug
