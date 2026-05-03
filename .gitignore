@@ -1,0 +1,13 @@
+# Personal data — never commit
+dashboard/trades.db
+dashboard/trades.db-shm
+dashboard/trades.db-wal
+
+# Secrets
+.env
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
