@@ -15,8 +15,6 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_from_directory
-from flask_httpauth import HTTPBasicAuth
-from werkzeug.security import generate_password_hash, check_password_hash
 
 # Load .env file if present (for Alpaca keys)
 from dotenv import load_dotenv
@@ -32,23 +30,6 @@ SIGNAL_LOG = BASE_DIR.parent / "signal_log.csv"
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 
-auth = HTTPBasicAuth()
-_DASHBOARD_USER = "ashleigh"
-_raw_pass = os.environ.get("DASHBOARD_PASSWORD")
-if not _raw_pass:
-    logging.warning("DASHBOARD_PASSWORD not set — using insecure default password!")
-    _raw_pass = "changeme123"
-_DASHBOARD_PASS = generate_password_hash(_raw_pass)
-
-@auth.verify_password
-def verify_password(username, password):
-    if username == _DASHBOARD_USER and check_password_hash(_DASHBOARD_PASS, password):
-        return username
-
-@app.before_request
-@auth.login_required
-def before_request():
-    pass
 
 
 # ── Database ─────────────────────────────────────────────────────────────────
@@ -809,10 +790,16 @@ def get_asian_signals():
                     if tomorrow_dow == trade_dow and prev_color == p2c and today_color == p1c:
                         trade_day = DAY_NAMES[trade_dow]
                         if not any(s['ticker'] == ticker and s['day'] == trade_day for s in signals):
-                            signals.append({
+                            _combo_desc = {
+                            ('Green', 'Green'): "2 up-days in a row → momentum carries into",
+                            ('Red',   'Red'):   "2 down-days in a row → oversold bounce on",
+                            ('Green', 'Red'):   "Rally then pullback → dip entry on",
+                            ('Red',   'Green'): "Selloff then recovery → follow-through on",
+                        }.get((p2c, p1c), f"{p2c} + {p1c} →")
+                        signals.append({
                                 'ticker': ticker, 'name': info['name'], 'market': info['market'],
                                 'type': 'COMBO', 'day': trade_day,
-                                'signal': f"{prev_color} + {today_color} → Buy {trade_day}",
+                                'signal': f"{_combo_desc} {trade_day}",
                                 'wr': wr, 'sl': sl,
                             })
 

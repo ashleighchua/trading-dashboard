@@ -229,7 +229,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 <nav class="sidebar">
   <div class="sb-logo">
     <div class="sb-logo-text">Trade<span>Log</span></div>
-    <div class="sb-logo-sub">SPY · QQQ · IWM System</div>
+    <div class="sb-logo-sub">US &amp; Asian ETF Signal Tracker</div>
   </div>
 
   <div class="sb-section">Menu</div>
@@ -371,7 +371,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
   <div class="page-header" style="display:flex;align-items:center;justify-content:space-between">
     <div>
       <div class="page-title">Unified Signals</div>
-      <div class="page-sub">Composite scores from Playbook + Asian + Dip Scanner + FinRL AI + Sentiment</div>
+      <div class="page-sub">Each card shows a ticker with at least one signal firing. The more independent reasons agree, the stronger the setup.</div>
     </div>
     <button onclick="loadUnifiedSignals()" style="background:var(--yellow);color:#000;border:none;padding:10px 24px;border-radius:var(--radius-sm);font-weight:700;cursor:pointer;font-size:13px">Scan All Sources</button>
   </div>
@@ -384,19 +384,19 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 
   <!-- How scoring works -->
   <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-top:20px">
-    <div style="color:var(--yellow);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px">How Scoring Works</div>
+    <div style="color:var(--yellow);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px">How to Read This</div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
       <div>
-        <div style="color:var(--green);font-weight:600;margin-bottom:4px;font-size:12px">Score (0-100)</div>
-        <div style="color:var(--muted2);font-size:11px">Average win rate of all active signals for that ticker. Higher = historically more reliable.</div>
+        <div style="color:var(--green);font-weight:600;margin-bottom:4px;font-size:12px">Score (0–100)</div>
+        <div style="color:var(--muted2);font-size:11px">Average historical win rate across all signals firing for this ticker. 60+ is good. 70+ is strong.</div>
       </div>
       <div>
-        <div style="color:var(--blue);font-weight:600;margin-bottom:4px;font-size:12px">Confidence</div>
-        <div style="color:var(--muted2);font-size:11px">Based on signal agreement: 1 source = LOW, 2 = MEDIUM, 3+ = HIGH. More sources agreeing = stronger conviction.</div>
+        <div style="color:var(--blue);font-weight:600;margin-bottom:4px;font-size:12px">Conviction level</div>
+        <div style="color:var(--muted2);font-size:11px">How many independent reasons agree. 1 source = Low. 2 = Medium. 3 or more = High conviction.</div>
       </div>
       <div>
-        <div style="color:var(--purple);font-weight:600;margin-bottom:4px;font-size:12px">Adaptive Weights</div>
-        <div style="color:var(--muted2);font-size:11px">Each signal uses its backtested win rate. New sources (FinRL, Sentiment) start at 50% and adjust as you log results.</div>
+        <div style="color:var(--purple);font-weight:600;margin-bottom:4px;font-size:12px">Win rate</div>
+        <div style="color:var(--muted2);font-size:11px">Each signal shows its own historical win rate. "Unproven" means the signal is new and hasn't been backtested yet.</div>
       </div>
     </div>
   </div>
@@ -421,7 +421,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 <div class="page" id="page-playbook" style="display:none !important">
   <div class="page-header">
     <div class="page-title">Daily Playbook</div>
-    <div class="page-sub">Your complete multi-ETF trading system — check signals every night at 9:00 PM</div>
+    <div class="page-sub">Historical patterns for SPY, QQQ, and IWM — shows which days have tended to go up or down based on what happened before.</div>
   </div>
 
   <!-- Today's Signals -->
@@ -606,7 +606,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 <div class="page" id="page-asian" style="display:none !important">
   <div class="page-header">
     <div class="page-title">Asian Market ETFs</div>
-    <div class="page-sub">Day-of-week, combo, multi-day &amp; overnight signals across 14 Asian ETFs</div>
+    <div class="page-sub">Historical patterns across 14 Asian ETFs — when a certain day or sequence tends to follow through the next day.</div>
   </div>
 
   <div style="display:flex;gap:12px;margin-bottom:20px">
@@ -699,7 +699,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 <div class="page" id="page-dipscanner" style="display:none !important">
   <div class="page-header">
     <div class="page-title">Dip Scanner</div>
-    <div class="page-sub">Fear-based dip-buying signals across 15 tickers. Score 1-10 (higher = stronger setup).</div>
+    <div class="page-sub">Scans for tickers that have pulled back hard — oversold conditions that have historically bounced. Score 1–10, higher is stronger.</div>
   </div>
 
   <div style="display:flex;gap:12px;margin-bottom:20px">
@@ -762,7 +762,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 <div class="page" id="page-finrl" style="display:none !important">
   <div class="page-header">
     <div class="page-title">FinRL AI Signals</div>
-    <div class="page-sub">Deep reinforcement learning (PPO) trading signals powered by FinRL. The agent learns from 3 months of price data + 13 technical indicators.</div>
+    <div class="page-sub">An AI model trained on recent price data that outputs a buy, sell, or hold signal. Experimental — treat as one opinion, not a directive.</div>
   </div>
 
   <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
@@ -807,11 +807,11 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
       </div>
       <div style="padding:12px;background:var(--surface);border-radius:6px">
         <div style="color:var(--purple);font-weight:700;margin-bottom:4px">2. RL Training (PPO)</div>
-        A PPO agent trades a simulated portfolio over historical data, learning which indicator combinations lead to profitable trades.
+        The AI practices trading on historical data, learning which market conditions tend to lead to profits.
       </div>
       <div style="padding:12px;background:var(--surface);border-radius:6px">
         <div style="color:var(--purple);font-weight:700;margin-bottom:4px">3. Live Prediction</div>
-        The trained agent observes today's market state and outputs BUY / SELL / HOLD with a confidence score. Models are cached daily.
+        It then looks at today's market and outputs Buy / Sell / Hold. Results are refreshed once per day.
       </div>
     </div>
     <div style="margin-top:12px;padding:10px;background:rgba(155,127,232,.06);border:1px solid rgba(155,127,232,.15);border-radius:6px;font-size:11px;color:var(--muted2)">
@@ -1588,7 +1588,19 @@ async function loadUnifiedSignals() {
     srcEl.innerHTML = srcHtml;
 
     const signals = data.signals || [];
-    if (!signals.length) { list.innerHTML = '<div style="color:var(--muted);padding:20px">No active signals detected.</div>'; return; }
+    if (!signals.length) { list.innerHTML = '<div style="color:var(--muted);padding:20px">No active signals right now. Check back after market close.</div>'; return; }
+
+    // Human-readable labels for internal source and tier codes
+    const SOURCE_LABEL = {
+      'Playbook':'Day Pattern', 'Asian':'Asian ETF', 'Monday Reversal':'Mon Reversal',
+      'Dip Scanner':'Dip Buy', 'Sentiment':'News', 'Mispricing':'Mean Reversion',
+      'FinRL AI':'AI Model', 'Waterfall':'Trend', 'Bearish':'Short Setup',
+    };
+    const TIER_LABEL = {
+      'STRONG':'Strong', 'RARE':'Rare setup', 'MULTI-DAY':'Multi-day',
+      'OVERNIGHT':'Overnight', 'AI':'AI', 'NLP':'Unproven', 'MODERATE':'Moderate', 'FAIR':'Fair',
+    };
+    const CONF_LABEL = {'HIGH':'High conviction','MEDIUM':'Medium conviction','LOW':'Low conviction'};
 
     let html = '';
     signals.forEach(sig => {
@@ -1596,68 +1608,70 @@ async function loadUnifiedSignals() {
       const actionIcon = sig.action === 'BUY' ? '▲' : sig.action === 'SELL' ? '▼' : '—';
       const confColor = sig.confidence === 'HIGH' ? 'var(--green)' : sig.confidence === 'MEDIUM' ? 'var(--yellow)' : 'var(--muted2)';
       const scoreColor = sig.score >= 65 ? 'var(--green)' : sig.score >= 55 ? 'var(--yellow)' : 'var(--muted2)';
-
-      // Score bar width
       const barWidth = Math.min(sig.score, 100);
+      const confLabel = CONF_LABEL[sig.confidence] || sig.confidence;
 
       let sigListHtml = '';
       (sig.active_signals||[]).forEach(s => {
         const tierColor = {'STRONG':'var(--green)','RARE':'var(--purple)','MULTI-DAY':'var(--blue)','OVERNIGHT':'var(--yellow)','AI':'var(--purple)','NLP':'var(--blue)','MODERATE':'var(--yellow)','FAIR':'var(--muted2)'};
         const tc = tierColor[s.tier] || 'var(--muted2)';
-        sigListHtml += `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11px">
-          <span style="color:${tc};font-weight:600;min-width:80px;font-size:10px">${s.source}</span>
-          <span style="color:var(--text);flex:1">${s.signal}</span>
-          <span style="color:var(--muted2);font-size:10px">WR ${s.wr}%</span>
-          <span style="background:rgba(255,255,255,.06);padding:2px 6px;border-radius:4px;font-size:9px;color:${tc}">${s.tier}</span>
+        const srcLabel = SOURCE_LABEL[s.source] || s.source;
+        const tierLabel = TIER_LABEL[s.tier] || s.tier;
+        sigListHtml += `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11px;border-bottom:1px solid var(--border)">
+          <span style="color:${tc};font-weight:600;min-width:90px;font-size:10px;text-transform:uppercase;letter-spacing:.3px">${srcLabel}</span>
+          <span style="color:var(--text);flex:1;line-height:1.4">${s.signal}</span>
+          <span style="color:var(--muted2);font-size:10px;white-space:nowrap">${s.wr}% win rate</span>
+          <span style="background:rgba(255,255,255,.05);padding:2px 7px;border-radius:4px;font-size:9px;color:${tc};white-space:nowrap">${tierLabel}</span>
         </div>`;
       });
 
-      // Sentiment badge
+      // Sentiment — show label only, no raw score number
       let sentHtml = '';
       if (sig.sentiment) {
         const sc = sig.sentiment.score;
         const sl = sig.sentiment.label;
         const sentColor = sc > 0 ? 'var(--green)' : sc < 0 ? 'var(--red)' : 'var(--muted2)';
-        sentHtml = `<span style="color:${sentColor};font-size:10px;margin-left:8px">${sl} (${sc > 0 ? '+' : ''}${sc.toFixed(2)})</span>`;
+        sentHtml = `<span style="color:${sentColor};font-size:10px;margin-left:4px">· News: ${sl}</span>`;
       }
 
-      // Trend badge
+      // Trend badge — plain English labels
       let trendHtml = '';
       let trendColor = 'var(--muted2)';
       if (sig.trend) {
         const trendColors = {'UPTREND':'var(--green)','CAUTION':'var(--yellow)','DOWNTREND':'var(--red)'};
-        const trendIcons = {'UPTREND':'↑','CAUTION':'⚠','DOWNTREND':'↓'};
+        const trendLabels = {'UPTREND':'↑ Uptrend','CAUTION':'⚠ Caution','DOWNTREND':'↓ Downtrend'};
         trendColor = trendColors[sig.trend.status] || 'var(--muted2)';
-        const ti = trendIcons[sig.trend.status] || '';
-        trendHtml = `<span style="background:rgba(255,255,255,.06);color:${trendColor};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;margin-left:4px">${ti} ${sig.trend.status}</span>`;
+        const tl = trendLabels[sig.trend.status] || sig.trend.status;
+        trendHtml = `<span style="background:rgba(255,255,255,.06);color:${trendColor};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;margin-left:4px">${tl}</span>`;
       }
+
+      const numSig = sig.num_signals || 0;
+      const reasonLabel = numSig === 1 ? '1 reason flagged' : `${numSig} independent reasons`;
 
       html += `<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:10px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <div style="display:flex;align-items:center;gap:12px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <span style="font-size:18px;font-weight:800;color:${actionColor}">${actionIcon}</span>
             <span style="font-size:16px;font-weight:700">${sig.ticker}</span>
             <span style="background:${actionColor};color:#000;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700">${sig.action}</span>
-            <span style="color:${confColor};font-size:11px;font-weight:600">${sig.confidence}</span>
+            <span style="color:${confColor};font-size:11px;font-weight:500">${confLabel}</span>
             ${trendHtml}
             ${sentHtml}
           </div>
-          <div style="display:flex;align-items:center;gap:16px">
+          <div style="display:flex;align-items:center;gap:16px;flex-shrink:0">
             ${sig.price ? `<span style="color:var(--muted2);font-size:12px">$${sig.price.toFixed(2)}</span>` : ''}
             <div style="text-align:right">
               <div style="font-size:24px;font-weight:800;color:${scoreColor}">${sig.score.toFixed(0)}</div>
-              <div style="font-size:9px;color:var(--muted);text-transform:uppercase">Score</div>
+              <div style="font-size:9px;color:var(--muted)">/100</div>
             </div>
           </div>
         </div>
-        <!-- Score bar -->
-        <div style="background:var(--border);border-radius:3px;height:4px;margin-bottom:8px;overflow:hidden">
+        <div style="background:var(--border);border-radius:3px;height:3px;margin-bottom:10px;overflow:hidden">
           <div style="background:${scoreColor};height:100%;width:${barWidth}%;border-radius:3px;transition:width .5s"></div>
         </div>
-        ${sig.trend ? `<div style="font-size:10px;color:var(--muted2);margin-bottom:10px">EMA-20: $${sig.trend.ema20} | EMA-50: $${sig.trend.ema50} | EMA-200: $${sig.trend.ema200} — <span style="color:${trendColor}">${sig.trend.detail}</span></div>` : ''}
-        <!-- Signal breakdown -->
+        ${sig.trend ? `<div style="font-size:10px;color:var(--muted2);margin-bottom:10px">Trend lines — 20-day avg: $${sig.trend.ema20} · 50-day avg: $${sig.trend.ema50} · 200-day avg: $${sig.trend.ema200} — <span style="color:${trendColor}">${sig.trend.detail}</span></div>` : ''}
         <div style="border-top:1px solid var(--border);padding-top:10px">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${sig.num_signals} signal${sig.num_signals !== 1 ? 's' : ''} agreeing</div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:8px">${reasonLabel}:</div>
           ${sigListHtml}
         </div>
       </div>`;
